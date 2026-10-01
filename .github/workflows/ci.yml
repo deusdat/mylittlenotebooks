@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  analyze-and-test:
+    name: Analyze and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test
+
+  build-desktop:
+    name: Build ${{ matrix.target }}
+    # AC20 requires the shell to build and run on all three desktop targets.
+    # This job is the actual verification for Windows and Linux, which cannot be
+    # built on a single developer machine.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, target: macos }
+          - { os: windows-latest, target: windows }
+          - { os: ubuntu-latest, target: linux }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.47.0
+          cache: true
+
+      - name: Install Linux desktop build dependencies
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build \
+            libgtk-3-dev pkg-config liblzma-dev
+
+      - name: Build ${{ matrix.target }}
+        run: flutter build ${{ matrix.target }} --debug
+
+      - name: Verify the build has no code-generation step
+        # The project has no build_runner and no generated sources; a build that
+        # needed one would mean that changed.
+        run: |
+          ! grep -q build_runner pubspec.lock
+          ! grep -rq "part '.*\.g\.dart'" lib

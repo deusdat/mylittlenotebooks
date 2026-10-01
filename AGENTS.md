@@ -1,170 +1,79 @@
 ---
-description: 'Spec-Driven Development workflow and Flutter/utopia_hooks code standards for the Local Music Player app'
+description: 'Spec-Driven Development workflow and Backend/UI code standards for this project'
 ---
 
 # Spec-Driven Development (SDD) Workflow
 
-This project uses the same three-phase spec-driven loop as our other stacks:
-**Specify → Plan → Implement**, with a memory-reconciling **Refresh** tail step.
-Each phase produces an artifact under `specs/<feature-name>/`, where
-`<feature-name>` is a **kebab-case** identifier.
+This project uses a simple three-phase spec-driven loop: **Specify → Plan → Implement**. Each phase produces an artifact under `specs/<timestamp>-<feature-name>/`, where:
+
+- `<timestamp>` is the **creation time in milliseconds since epoch** (13 digits, e.g. `1759250400000`), so directories sort naturally by creation order.
+- `<feature-name>` is a **kebab-case** identifier (e.g. `user-auth-oauth`).
 
 ## Triggering Phases
 
 | Command | Phase | Artifact |
 |---|---|---|
-| `specify <description>` | Specify | `specs/<name>/spec.md` |
-| `plan <name>` | Plan | `specs/<name>/plan.md` |
-| `break down <name>` | Task breakdown | `specs/<name>/tasks.md` |
+| `specify <description>` | Specify | `specs/<timestamp>-<name>/spec.md` |
+| `plan <name>` | Plan | `specs/<timestamp>-<name>/plan.md` |
+| `break down <name>` | Task breakdown | `specs/<timestamp>-<name>/tasks.md` |
 | `implement <name>` | Implement | Code changes |
-| `verify <name>` | Verify | Test run report; gates `refresh` |
-| `refresh <name>` | Refresh | reconciled `specs/_context/project-memory.md` + `agent-memories/`, and an advanced `next-steps.md` (marks the feature ✅ and points the human at the next command) |
 
-`specify` reads `specs/_context/project-memory.md` **and**
-`specs/_context/domain-language.md` first, so the spec reuses durable
-vocabulary (Track, Playlist, Playlist Entry, Repetition, Queue, Now Playing
-Session, Save Sheet — see Section "Domain Language" below) instead of
-re-deriving it. `verify` is a hard gate between `implement` and `refresh`:
-nothing is reconciled into memory until the Verifier persona confirms the
-required tests exist and pass. `refresh` is otherwise a loop-**tail** step,
-also invokable on demand to recover from out-of-band drift.
+When you say `specify <description>`, the agent MUST:
+1. Ask for a short description if none is provided
+2. Derive a **kebab-case** `<name>` from it (e.g., "user auth with OAuth" → `user-auth-oauth`)
+3. Get the current time in milliseconds since epoch and prefix it (e.g. `1759250400000-user-auth-oauth`)
+4. Create `specs/<timestamp>-<name>/spec.md`
+5. **Tell you the full directory name** (timestamp + kebab-case) so you can use it in downstream commands
+
+All subsequent commands (`plan`, `break down`, `implement`) require the **full directory name** — `<timestamp>-<kebab-name>` — as the argument. Resolve a bare kebab-case name to its unique matching directory under `specs/`; if more than one match exists, ask which one.
 
 ## Phase Flow & Error Escalation
 
 ```
-spec.md ──► plan.md ──► tasks.md ──► implementation ──► verify (gate) ──► refresh
-   ▲            ▲             ▲                              │
-   └──── escalate ──────── to root cause ─────────────────────┘
+spec.md  ──►  plan.md  ──►  tasks.md  ──►  implementation
+   ▲            ▲             ▲
+   └──── escalate ──────── to ──── root cause ────┘
 ```
 
-If an issue is found at any stage, trace back to the **root cause** — the
-earliest artifact where the error originated. Fix it there and regenerate
-all downstream artifacts, including any tests already written against the
-wrong contract.
+If you find an issue at any stage, the system traces back to the **root cause** — the earliest artifact where the error originated. That artifact is fixed, and all downstream artifacts are regenerated.
 
-- **Issue at verify** → check tasks.md; if the task was sound but
-  incomplete, add the missing test and re-run. If the task itself was
-  wrong, escalate to plan.md.
-- **Issue in tasks.md** → check plan.md; if unsound, check spec.md. Fix at
-  root. Regenerate downstream.
-- **Issue in plan.md** → check spec.md. Fix at root. Regenerate plan.md
-  (and tasks.md if it existed).
-- **Issue in spec.md** → fix spec.md. Regenerate plan.md, tasks.md,
-  implementation, and tests.
+- **Issue in tasks.md** → check if plan.md is sound; if not, check spec.md. Fix at the source. Regenerate downstream.
+- **Issue in plan.md** → check if spec.md is sound. Fix at the source. Regenerate plan.md (and tasks.md if it existed).
+- **Issue in spec.md** → fix spec.md. Regenerate plan.md (and tasks.md, implementation).
 
 ## Agent Personas
 
-Persona instructions live in one canonical place — `.github/agents/`. The
-other harnesses reach the same files through a git-tracked directory symlink:
-`.opencode/agents` → `../.github/agents`. Edit only the canonical files in
-`.github/agents/` — the symlink makes that one edit visible to every harness
-that reads `.opencode/agents/`. `.claude/agents/` does not exist, so Claude
-Code has no native `@`-persona discovery; it reaches the personas through
-`AGENTS.md` and the internal skills under `.claude/skills/`. See
-"Cross-Harness Setup" below for why.
+This workflow uses four agent personas. Each has its own instruction file under `.agents/`:
 
-| Persona | Canonical file | When Invoked | Memory Maintenance |
-|---|---|---|---|
-| **Specifier** | `.github/agents/specifier.md` | `specify <description>` | Reads `specs/_context/project-memory.md` and `specs/_context/domain-language.md` first; appends new durable facts/decisions and flips supersessions there. |
-| **Planner** | `.github/agents/planner.md` | `plan <name>` | Refreshes `agent-memories/architecture-overview.md` when the feature adds a new Screen, a new piece of global state, or a new data-layer service. |
-| **Task Builder** | `.github/agents/task-builder.md` | `break down <name>` | Maps each task to the `agent-memories/feature-checklist.md` step it fulfills, and to the specific test(s) required by that step. |
-| **Implementer** | `.github/agents/implementer.md` | `implement <name>` | Reads relevant `agent-memories/` files **and** consults the `utopia_hooks` documentation (see below) before writing a single line of hook code. Updates memory files after shipping. |
-| **Verifier** | `.github/agents/verifier.md` | `verify <name>` (auto-invoked at the end of `implement`) | Never edits memory. Only reads `agent-memories/testing-patterns.md`, runs the gate in "Completion Criteria," and either passes control to Refresher or bounces the task back to Implementer with a specific failure. |
-| **Refresher** | `.github/agents/refresher.md` | `refresh <name>` or on demand | Re-walks the repo and rewrites `project-memory.md` + affected `agent-memories/` files to match what shipped; no fabrication. Also advances `next-steps.md` so the human always has a "next command to run" after checking in the code. Only runs after Verifier has passed. |
+| Persona | File | When invoked |
+|---|---|---|
+| **Specifier** | `.agents/specifier/instruction.md` | `specify <description>` |
+| **Planner** | `.agents/planner/instruction.md` | `plan <name>` |
+| **Task Builder** | `.agents/task-builder/instruction.md` | `break down <name>` |
+| **Implementer** | `.agents/implementer/instruction.md` | `implement <name>` |
 
-The **Verifier** is the safeguard this project adds on top of the standard
-loop: no feature reaches `refresh` — and therefore no feature is considered
-"done" — without a passing unit-test run for its hooks and a passing
-widget/UI-test run for its screens. See "Completion Criteria."
+Each agent MUST reference the "Go Development Instructions" section for backend and "Flutter/Dart Development Instructions" for frontend language-specific standards.
 
-## Cross-Harness Setup
-
-This project is worked on from OpenCode, VS Code (GitHub Copilot), and
-occasionally Claude Code. Those three harnesses each discover "custom
-agents" from a different path with a different file shape, so no single
-path can serve all three. Skills don't have this problem —
-`.claude/skills/<name>/SKILL.md` happens to already be read natively by all
-three — but agent personas do. This repo keeps **one set of real persona
-files** and lets the harnesses that support it reach them by symlink:
-
-```
-.github/agents/<name>.md          # canonical — edit these files
-.opencode/agents                  # git-tracked symlink → ../.github/agents
-```
-
-- **OpenCode** reads `AGENTS.md` at the repo root automatically — no
-  setting required — and separately discovers subagents from
-  `.opencode/agents/*.md`, which resolve through the symlink to the
-  canonical files.
-- **VS Code / GitHub Copilot** also reads `AGENTS.md`, but it's gated
-  behind a setting that isn't on by default in every VS Code version:
-  set `chat.useAgentsMdFile` to `true`. It discovers custom agents from
-  `.github/agents/*.md`, invoked with `@<name>` in Copilot Chat.
-- **Claude Code** discovers subagents from `.claude/agents/*.md`, which
-  does not exist in this repo — Claude Code has no native `@`-persona
-  subagents here. It reaches the personas through `AGENTS.md` and the
-  internal `.claude/skills/`.
-
-Because there is a single canonical directory, there is nothing to keep in
-sync beyond the symlink itself (one `ln -s`, already committed): the actual
-process, rules, and escalation logic for a persona are written once, in
-`.github/agents/<name>.md`, and read from there regardless of which harness
-is driving.
-
-## Skills
-
-Skills are reusable instruction sets an agent loads before doing a specific
-kind of work — same idea as `agent-memories/`, but packaged so they can be
-installed, versioned, and shared. One is external (published by the
-`utopia_hooks` maintainers); the rest are authored for this repo and live
-under `.claude/skills/<name>/SKILL.md`.
-
-| Skill | Source | Invoked by | Purpose |
-|---|---|---|---|
-| `utopia-hooks` | External — `Utopia-USS/utopia-flutter-skills` marketplace | Planner, Implementer | Teaches the Screen/State/View pattern and the full hook catalog up front so hook code is idiomatic on the first try instead of guessed. Its checks run through `utopia_cli`. |
-| `spec-writer` | `.claude/skills/spec-writer/SKILL.md` | Specifier | Encodes the `spec.md` template below and the rule to read `project-memory.md` and `domain-language.md` before writing. |
-| `plan-architect` | `.claude/skills/plan-architect/SKILL.md` | Planner | Encodes the decision tree for local hook state vs. global state, and when a feature needs a new data-layer service vs. reusing an existing one. |
-| `task-decomposer` | `.claude/skills/task-decomposer/SKILL.md` | Task Builder | Encodes the mapping from `feature-checklist.md` steps to concrete tasks, and ensures every task touching a hook or a screen has a paired test task. |
-| `hook-test-writer` | `.claude/skills/hook-test-writer/SKILL.md` | Implementer, Verifier | Encodes the pattern for testing a hook as a plain Dart function — no widget tree required. See "Testing Hooks" below. |
-| `widget-test-writer` | `.claude/skills/widget-test-writer/SKILL.md` | Implementer, Verifier | Encodes the pattern for testing a Screen's rendered output and interactions with `flutter_test`. See "Testing Views" below. |
-| `memory-refresher` | `.claude/skills/memory-refresher/SKILL.md` | Refresher | Encodes how to diff shipped code against `agent-memories/` and rewrite only what changed, without inventing facts. |
-
-Install the external skill once per machine/CI runner:
-
-```bash
-dart pub global activate utopia_cli
-# In Claude Code:
-/plugin marketplace add Utopia-USS/utopia-flutter-skills
-/plugin install utopia-hooks@utopia-flutter-skills
-```
+> **Note:** the `.agents/` directory does not exist in this repository, so these four instruction files are currently absent. Until they are created, each phase runs from the templates above plus the language-specific sections of this file.
 
 ## Artifact Templates
 
-### `specs/<name>/spec.md`
+### spec.md (`specs/<timestamp>-<name>/spec.md`)
 
 ```markdown
 # Feature: <Title>
 
+**Spec directory:** `<timestamp>-<kebab-name>`
 **Feature name:** `<kebab-name>`
 
 ## Context
-What problem does this feature solve? Which existing Use Case(s) from
-`specs/_context/use-cases.md` does it implement or extend, if any?
+What problem does this feature solve? Why is it needed?
 
 ## Goals
 - Bullet list of what this feature aims to achieve.
 
 ## Non-Goals
 - Bullet list of what is explicitly out of scope.
-
-## References
-- `specs/_context/project-memory.md` — durable facts about the project.
-- `specs/_context/domain-language.md` — Track, Playlist, Playlist Entry,
-  Repetition, Queue, Now Playing Session, Save Sheet, etc.
-- `agent-memories/architecture-overview.md` — current Screen list, global
-  state list, data-layer services.
-- Prior specs whose decisions this feature reuses or supersedes, with a
-  one-line reason each.
 
 ## Requirements
 
@@ -173,7 +82,7 @@ What problem does this feature solve? Which existing Use Case(s) from
 - FR2: ...
 
 ### Non-Functional Requirements
-- NFR1: Performance, accessibility, offline behavior, etc.
+- NFR1: Performance, security, etc.
 
 ## Acceptance Criteria
 - [ ] AC1: ...
@@ -183,329 +92,148 @@ What problem does this feature solve? Which existing Use Case(s) from
 - What needs further investigation?
 ```
 
-### `specs/<name>/plan.md`
+### plan.md (`specs/<timestamp>-<name>/plan.md`)
 
 ```markdown
 # Plan: <Title>
 
 ## Approach
-High-level strategy. Is this a new Screen, or an extension of an existing
-one? Does it introduce a new piece of shared/global state, or is it purely
-local to one hook?
+High-level strategy for implementing this feature.
 
 ## Architecture & Design Decisions
-- Screen(s) touched or added (Screen / State / View triple).
-- New hooks required? Local `useState`/`useEffect` composition, or a new
-  Global State object?
-- New or changed data-layer service (repository interface) required?
-- Does this feature change the Domain Model (Section "Domain Language")?
-  If it adds/changes a Playlist Entry, Queue, or Repetition rule, say so
-  explicitly — that's a root-cause-sensitive area.
+Key structural choices, patterns, and rationale.
 
 ## Milestones
 1. **Milestone 1** — What is delivered, estimated effort.
 2. **Milestone 2** ...
 
 ## Dependencies
-- What data-layer services or fixtures must exist before this work can
-  start?
-- Which other Screens or global state does this touch?
+- What must exist before this work can start.
 
 ## Risks & Mitigations
 - Risk → Mitigation
 ```
 
-### `specs/<name>/tasks.md`
+### tasks.md (`specs/<timestamp>-<name>/tasks.md`)
 
 ```markdown
 # Tasks: <Title>
 
 ## Prerequisites
-- Links to spec.md, plan.md.
-- Checklist step mapping: each task corresponds to a step in
-  `agent-memories/feature-checklist.md`.
+- Links to spec.md, plan.md, any required setup.
 
 ## Task List
 
 ### T1: <Short description>
-- **Files:** `lib/features/<feature>/...`
+- **Files:** `path/to/file.<ext>`
 - **Effort:** Small / Medium / Large
-- **Depends on:** (none or T0)
-- **Checklist step:** State / View / Data Service / etc.
-- **Paired test task:** T1a (hook unit test) and/or T1b (widget test) —
-  every task that adds or changes a hook or a Screen MUST have at least
-  one paired test task. A task with no paired test task is a plan defect;
-  escalate to Task Builder, not a shortcut Implementer takes silently.
+- **Depends on:** T0
 - **Steps:**
-  1. Detailed step
-  2. Detailed step
+    1. Detailed step
+    2. Detailed step
+
+### T2: <Short description>
+...
 ```
 
----
+# Go Development Instructions
 
-# Flutter Development Instructions
+Follow idiomatic Go practices and community standards when writing Go code.
 
-These instructions govern all code written in this repository. When in
-doubt, read the relevant memory file or the `utopia_hooks` documentation —
-they are the authoritative sources, not this file's paraphrase of them.
+## Agent Directives
 
-## Memory-First Protocol (REQUIRED)
-
-**Before writing any code**, read the relevant `agent-memories/` files, and
-for anything hook-related, also consult the `utopia_hooks` docs (below):
-
-| Task | Read |
-|------|------|
-| Domain vocabulary (Track, Playlist, Repetition, etc.) | `specs/_context/domain-language.md` |
-| Writing a hook / State object | `agent-memories/hook-pattern.md` + `utopia_hooks` docs |
-| Writing a View (pure render widget) | `agent-memories/view-pattern.md` |
-| Writing or changing Global State | `agent-memories/global-state-pattern.md` |
-| Writing a data-layer service | `agent-memories/data-service-pattern.md` |
-| Writing tests | `agent-memories/testing-patterns.md` |
-| Overall structure | `agent-memories/architecture-overview.md` |
-| End-to-end feature guide | `agent-memories/feature-checklist.md` |
-
-**After shipping**, the Implementer updates the affected memory file(s)
-with any new patterns, gotchas, or corrections discovered; the Refresher
-reconciles everything else after Verifier passes.
-
-## Project Overview
-
-**Local Music Player** is a Flutter mobile app for browsing a locally
-indexed audio library, composing Playlists — including intentionally
-repeated entries — and playing them back.
-
-- **Framework:** Flutter (latest stable), Dart 3.x
-- **State management:** [`utopia_hooks`](https://hooks.utopiasoft.io/) —
-  a hooks-based architecture, not `flutter_hooks`; do not confuse the two
-  packages or their APIs
-- **Pattern:** Screen / State / View (see below)
-- **Testing:** `package:test` for hook unit tests, `flutter_test` for
-  widget/UI tests
-- **Domain source of truth:** `specs/_context/domain-language.md` and
-  `specs/_context/use-cases.md` (UC-1 through UC-19 as of this writing —
-  Library indexing, Standalone Playback, Search, Playlist Management,
-  Playlist Composition including Repetition, the Save Sheet, Now
-  Playing/Transport, and Concurrent Playback (Sibling Track))
-
-## Documentation & MCP Access for `utopia_hooks`
-
-Do not guess at `utopia_hooks` API surface from general React-hooks
-knowledge — it is inspired by React Hooks but has its own hook catalog,
-its own Global State model, and its own testing harness. The external
-`utopia-hooks` skill is **not installed in this environment**; the
-`utopia_cli` MCP server (`utopia mcp`) is **not registered**. Two
-resources exist instead, and agents should not improvise past them:
-
-1. **The `ragdocs` MCP server** (registered in the opencode MCP config as
-   `ragdocs`) — the `utopia-flutter` monorepo (the source of `utopia_hooks`)
-   is indexed there, so `ragdocs_search_documentation` returns the
-   authoritative hook catalog, signatures, and usage straight from the code
-   that defines them.
-2. **The `utopia` CLI** at `~/.pub-cache/bin/utopia` (not on `$PATH`) —
-   `describe` (project structure: screens, routes, states, services, deps as
-   JSON), `doctor`, and `hooks analyze --all`. Before writing or modifying
-   any hook, run `describe` to see the project's current structure rather
-   than inferring it from a partial file listing, and run
-   `hooks analyze --all` to check for existing violations before adding more
-   surface area to a file that already has some.
-
-If a hook pattern is still unclear after consulting both, that is a
-signal to stop and ask, not to improvise — improvised hook usage is the
-single most common source of untestable state in this architecture.
-
-## The Screen / State / View Pattern
-
-Every feature screen is split into three files so business logic stays
-provable in plain Dart, independent of the widget tree:
-
-| File | Purpose |
-|------|---------|
-| `<feature>_screen.dart` | Thin `HookWidget` wiring: calls the State hook, passes the result to the View. No business logic. |
-| `<feature>_state.dart` | A hook function (e.g. `usePlaylistDetailState(...)`) composed of `useState`, `useEffect`, and any Global State reads, returning a typed, immutable state object. All business logic lives here. |
-| `<feature>_view.dart` | A pure widget that takes the state object as a constructor argument and renders it. Contains no hooks and no direct calls to data services. |
-
-```dart
-// playlist_detail_screen.dart
-class PlaylistDetailScreen extends HookWidget {
-  const PlaylistDetailScreen({required this.playlistId, super.key});
-  final String playlistId;
-
-  @override
-  Widget build(BuildContext context) {
-    final state = usePlaylistDetailState(playlistId: playlistId);
-    return PlaylistDetailView(state: state);
-  }
-}
-```
-
-```dart
-// playlist_detail_state.dart
-PlaylistDetailState usePlaylistDetailState({required String playlistId}) {
-  final playlists = usePlaylistsGlobalState();
-  final playlist = playlists.value.firstWhere((p) => p.id == playlistId);
-
-  void moveEntry(String entryId, int direction) {
-    playlists.moveEntry(playlistId, entryId, direction);
-  }
-
-  void removeEntry(String entryId) {
-    playlists.removeEntry(playlistId, entryId);
-  }
-
-  return PlaylistDetailState(
-    playlist: playlist,
-    onMoveEntry: moveEntry,
-    onRemoveEntry: removeEntry,
-  );
-}
-```
-
-Because the hook function above imports nothing from `dart:ui` or
-`package:flutter/widgets.dart` beyond what `utopia_hooks` itself needs, it
-can be unit-tested exactly like any other Dart function — see "Testing
-Hooks."
-
-## Global State and Repetition
-
-The **Playlist Entry** model (see domain language) is enforced at the
-Global State layer, not in any individual Screen:
-
-- A Global State object owns the canonical, in-memory list of Playlists.
-- Adding a Track to a Playlist always appends a new Entry with a fresh
-  entry identity. **No code path checks for an existing Entry referencing
-  the same Track before adding one.** If you find yourself writing that
-  check, stop — it contradicts the domain rule captured in UC-10 and
-  UC-14, and the Verifier's test gate will fail deliberately-written
-  regression tests that assert Repetition is possible.
-- Removing or reordering one Entry must never mutate a sibling Entry that
-  references the same Track. Cover this explicitly in the hook's unit
-  test, not just the happy path.
-
-## Testing Requirements (REQUIRED — enforced by the Verifier persona)
-
-A task is not complete until **both** of the following exist and pass for
-every hook and every Screen it touches. This is a hard gate, not a
-suggestion: the Verifier persona blocks `refresh` until both are green.
-
-### Testing Hooks
-
-Hooks are plain Dart functions once decoupled from the widget tree — test
-them with `package:test`, no `WidgetTester`, no pump cycles, no mocking
-the framework itself. Use the `utopia_hooks` testing harness (consult the
-`utopia-hooks` skill / MCP for the exact current API rather than
-hand-rolling a harness) to invoke the hook function directly:
-
-```dart
-// playlist_detail_state_test.dart
-void main() {
-  test('adding the same track twice produces two independent entries', () {
-    final harness = HookTestHarness(); // exact API: see utopia_hooks docs
-    final state = harness.run(() => usePlaylistDetailState(playlistId: 'p1'));
-
-    state.onAddTrack('t1');
-    state.onAddTrack('t1');
-
-    expect(state.playlist.entries.length, 2);
-    expect(state.playlist.entries[0].entryId,
-        isNot(equals(state.playlist.entries[1].entryId)));
-  });
-
-  test('removing one entry leaves its repeated sibling untouched', () {
-    // Arrange a playlist with two entries referencing the same track,
-    // remove one by entryId, assert exactly one Entry remains and its
-    // entryId is the sibling's — not the removed one's.
-  });
-}
-```
-
-### Testing Views
-
-Every Screen gets a widget test asserting it renders correctly given a
-state object, and that user interactions call the expected state
-callbacks — this is the UI-level counterpart to the hook unit test, and
-it is what catches the class of bug hook tests structurally cannot: wrong
-widget wired to wrong callback, a button that doesn't exist where the
-design says it should, text that doesn't update on rebuild.
-
-```dart
-// playlist_detail_view_test.dart
-void main() {
-  testWidgets('tapping remove calls onRemoveEntry with the tapped entry id',
-      (tester) async {
-    String? removedId;
-    final state = PlaylistDetailState(
-      playlist: fakePlaylistWithTwoEntries(),
-      onMoveEntry: (_, __) {},
-      onRemoveEntry: (id) => removedId = id,
-    );
-
-    await tester.pumpWidget(MaterialApp(
-      home: PlaylistDetailView(state: state),
-    ));
-
-    await tester.tap(find.byKey(const Key('remove-entry-e1')));
-    await tester.pump();
-
-    expect(removedId, 'e1');
-  });
-}
-```
-
-Screens with non-trivial visual layout (Now Playing, Save Sheet) should
-also get a golden test where practical — check
-`agent-memories/testing-patterns.md` for the current golden-test
-conventions before adding a new one.
+1.  **Test-Driven Development (TDD):** Implement tests first where possible, all changes must be verified.
+2.  **Architecture:** The agent must use a clean-architecture pattern with the following layers:
+    - **Domain** (`backend/domain`): Business logic, Generic UseCases (`github.com/deusdat/cleango`), domain models (`model_*.go`), and interfaces. Zero incoming dependencies from outer layers like routers or databases.
+    - **Delivery** (`backend/api`): Chi application routers (`github.com/go-chi/chi/v5`). Features subpackages like `presenters` and `factory`. Handlers only return JSON data via injected Presenters parsing OpenAPI generated models (`apimodels`).
+    - **Dependency Injection**: No automated compile-time DI like Wire. We use a factory pattern `Factory(ctx)` residing in `backend/api/factory` which supplies handlers with initialized configurations, database connections, and use-cases.
+3.  **UI Technology:** (Moved to Dart/Flutter specific instructions below). Frontend handles its own UI using generated models. Handlers only return JSON data via injected Presenters parsing OpenAPI models.
+4.  **Logging:** `slog` library is used through the Request-Scoped Factory (`fac.Logger(...)`). Use cases should log entry, exit, and errors dynamically.
 
 ## Naming Conventions
+- Database Objects: Rambler migrations. Table names `_t`, views `_v`, functions `_f` (e.g. `1742512345678_create_channel_t.sql`). Do NOT mutate DB except via migrations.
 
-| Element | Convention | Example |
-|---------|-----------|---------|
-| Feature directory | `lib/features/<feature>/` | `lib/features/playlist_detail/` |
-| Screen file | `<feature>_screen.dart` | `playlist_detail_screen.dart` |
-| State/hook file | `<feature>_state.dart` | `playlist_detail_state.dart` |
-| View file | `<feature>_view.dart` | `playlist_detail_view.dart` |
-| Global state file | `lib/state/<domain>_global_state.dart` | `playlists_global_state.dart` |
-| Data service interface | `lib/services/<domain>_service.dart` | `library_service.dart` |
-| Hook unit test | `<feature>_state_test.dart` | `playlist_detail_state_test.dart` |
-| Widget/UI test | `<feature>_view_test.dart` | `playlist_detail_view_test.dart` |
-| State class | PascalCase, `<Feature>State` | `PlaylistDetailState` |
+## Architecture and Project Structure
 
-## Completion Criteria
+### Use Case Pattern
+All business logic resides in `use_case_xxx.go` files executing via `github.com/deusdat/cleango`.
 
-A task is **not complete** until **all** of the following pass, and the
-Verifier persona has confirmed it — Implementer does not self-certify:
+```go
+type MyUseCase struct {
+logger *slog.Logger
+// dependencies
+}
 
-1. **Compiles**: `flutter analyze` (zero issues)
-2. **Formatted**: `dart format --set-exit-if-changed .`
-3. **Hook unit tests pass**: `flutter test test/unit` — every hook added
-   or changed in this task has a corresponding test, including at least
-   one test asserting Repetition behaves correctly if the hook touches
-   Playlist Entries.
-4. **Widget/UI tests pass**: `flutter test test/widget` — every Screen
-   added or changed in this task has a corresponding widget test. No
-   tests are skipped or deleted to make this pass.
-5. **Project doctor clean**: `~/.pub-cache/bin/utopia doctor` — structural/
-   lint checks via the `utopia` CLI (not on `$PATH`).
-6. **Hook audit clean**: `~/.pub-cache/bin/utopia hooks analyze --all`
-   reports no new violations introduced by this task.
+func (u *MyUseCase) Execute(input MyInput, p cleango.Presenter[MyOutput]) {
+// Logging start
+if err != nil {
+p.Present(cleango.Output[MyOutput]{ Err: cleango.ToDomainError("MyUseCase...", err) })
+return
+}
+p.Present(cleango.Output[MyOutput]{ Answer: MyOutput{...} })
+}
+```
 
-If any of 3–6 fails, the Verifier bounces the task back to the Implementer
-with the specific failing check — it does not attempt to fix the code
-itself, and it does not relax the gate to let a task through.
+### Handler and Command Pattern
+Routing happens strictly with `github.com/go-chi/chi/v5`.
+```go
+func MyHandler(w http.ResponseWriter, r *http.Request) {
+ctx := r.Context()
+fac := f(ctx) // factory injection
+l := fac.Logger("get /myroute")
 
-## General Dart/Flutter Standards
+uc := fac.MyUseCase(l)
+presenter := fac.MyPresenter(l, w)
 
-- Write simple, idiomatic Dart. Clarity over cleverness.
-- Keep the happy path left-aligned; return/guard early.
-- Hooks return immutable state objects; do not mutate a returned state
-  object's fields from a View — call the provided callback instead.
-- Views never call a data service or Global State directly — only through
-  the callbacks the State hook provides.
-- Prefer composing existing hooks (`useState`, `useEffect`, `useProvided`,
-  etc.) over writing a new low-level hook from scratch; check the
-  `utopia_hooks` hook catalog via the `ragdocs` MCP server
-  (`ragdocs_search_documentation`) first.
-- A Screen, State, or View file that grows large enough to need internal
-  sub-sections is a signal to split the feature directory further, not to
-  keep scrolling.
+uc.Execute(domain.MyInput{...}, presenter)
+}
+```
+
+# Flutter / Dart Development Instructions
+
+The app is a Flutter desktop-first application using hook-based state management. The Flutter project lives at the **repository root** (`lib/`, `test/`, `pubspec.yaml`) — there is no `frontend/` subdirectory.
+
+## Agent Directives
+
+1.  **State Management**: Use `utopia_hooks` exclusively. Riverpod, `get_it`, and `StatefulWidget`-based state management are all prohibited in app code. Follow the **State → Hook → View → Coordinator** pattern:
+    - **State**: an immutable class holding values plus the actions that change them.
+    - **Hook**: a `use…`-prefixed function that owns the logic and returns a State.
+    - **View**: a `StatelessWidget` that renders a State and nothing else.
+    - **Coordinator**: a `HookWidget` that binds the Hook and View together and performs navigation.
+2.  **Global state**: register in `HookProviderContainerWidget` wrapping `MaterialApp`; consume with `useProvided<T>()`. Global state registered there lives for the whole app session — this is the analogue of `keepAlive`.
+3.  **Local state**: `useState<T>(initial)`. Side effects and teardown: `useEffect(() { …; return dispose; }, [keys])`. Derived values: `useMemoized`, `usePrevious`, `useDebounced`. Never store a value that is merely derived from another value.
+4.  **Hook rules** (breaking these breaks the framework): hooks may only be called directly inside `HookWidget.build` or inside another hook — never in a callback, never inside an `if`, loop, or try/catch. Use `useIf`, `useIfNotNull`, `useLet`, or `useMemoizedIf` when a branch must contain a hook. Always pass explicit `keys` to `useEffect`.
+5.  **Dependency injection**: constructor injection. Repositories and stores are plain objects passed as parameters or captured by closures. There is no service locator.
+6.  **Pre-`runApp` bootstrap**: anything the first frame depends on must be `await`ed in `main()` before `runApp` and handed to the root widget as a constructor argument. Never make the UI wait on an asynchronous hook for a value needed on frame one.
+7.  **Testing**: hooks are unit-testable without a widget tree via `SimpleHookContext(() => useMyHook(), provided: {…})` — exposing `.value`, `.rebuild()`, `.waitUntil(predicate)`. Pure logic must stay free of `package:flutter` imports so it can be tested with a plain `test()`.
+8.  **Client-Server Contracts**: Exclusively use `package:backend` which is auto-generated by OpenAPI generator based off the `code_gen/api.yaml`. Treat the API yaml as the source of truth for structures. Start by updating `api.yaml`, run `generate.sh` in `code_gen/`, and then hook to the resulting client code.
+9.  **Architectural Layout**:
+    - `lib/models/`: immutable domain representations and pure logic, with no Flutter imports.
+    - `lib/data/`: repository and storage interfaces plus their implementations.
+    - `lib/state/`: global-state hooks — one State class plus one hook per stateful concern.
+    - `lib/shell/`: app chrome, navigation panel, and layout.
+    - `lib/pages/`: one file per routed destination.
+    - `lib/widgets/`: cohesive shared visual components.
+    - `lib/router/`: route table and navigation guards.
+    - `lib/services/`: bridges hooks and UI to generated backend client functions.
+
+## Reference: `utopia_hooks`
+
+`utopia_hooks` is a **published pub.dev package** consumed as an ordinary dependency. There is **no local clone**: the `only-ai/utopia-flutter/` path referenced by earlier revisions of this file does not exist in this repository. Read package source via `Read`/`Grep`, or extract the archive from pub.dev.
+
+| Package | Constraint | Purpose |
+|---|---|---|
+| `utopia_hooks` | `^0.4.26+1` | Core: `HookWidget`, `useState`, `useEffect`, `useMemoized`, `useProvided`, `HookProviderContainerWidget`, `SimpleHookContext` |
+| `utopia_widgets` | `^0.1.2+1` | Shared widget components |
+| `utopia_utils` | `^0.3.3` | Supporting utilities (transitive) |
+| `utopia_collections` | `^0.1.2` | Collection helpers (transitive) |
+| `utopia_validation` | `^0.1.0+4` | Form validation (transitive) |
+
+Upstream guide site: <https://hooks.utopiasoft.io> · Source: <https://github.com/Utopia-USS/utopia-flutter>
+
+### Traps
+
+- **The pub.dev README is stale.** It shows `HookProviderContainerWidget(providers: {…})`. The real constructor takes the map **positionally**: `HookProviderContainerWidget({…}, child: …)`. Trust the package source over the README.
+- **`usePersistedState` is asynchronous by design.** Its `value` stays `null` until the `get()` future resolves, and it exposes `isInitialized` / `isSynchronized`. It is the right tool for settings and drafts, and the **wrong** tool for anything that must be correct on the first frame — preload in `main()` per Directive 6 instead.
+- **`useState` asserts on unmounted writes.** Assigning `.value` after unmount throws in debug; use `setIfMounted` (via `StateHookStateX`) when the write may race teardown.
+- The `ragdocs` MCP index holds scraped GitHub HTML pages rather than code chunks — prefer reading the extracted package source.

@@ -5,7 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mylittlenotebooks/app.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
+import 'package:mylittlenotebooks/models/notebook.dart';
 import 'package:mylittlenotebooks/models/panel_geometry.dart';
+import 'package:mylittlenotebooks/pages/notebook_detail_page.dart';
+import 'package:mylittlenotebooks/pages/notebooks_home_page.dart';
 import 'package:mylittlenotebooks/shell/nav_panel.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
 
@@ -193,6 +196,124 @@ void main() {
         findsAtLeastNWidgets(nodes),
       );
       handle.dispose();
+    });
+  });
+
+  group('route pushes are idempotent (FR9, AC13)', () {
+    // A `push` appends, and every notebook page carries a stable per-notebook key
+    // so back can restore scroll position (AC13). A repeated push therefore puts
+    // two pages with the same key into one Navigator, which Flutter rejects:
+    //
+    //   Failed assertion: line 4096: '!keyReservation.contains(key)'
+    //
+    // One stray double-click reaches it, because both taps are delivered before
+    // the frame that would swap the panel into detail level.
+    Future<List<Notebook>> pumpSeeded(WidgetTester tester) async {
+      final seeded = seededRepository();
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(1200, 800);
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(App(
+        preloadedCollapsed: false,
+        store: InMemoryPanelStateStore(),
+        repo: seeded.repository,
+        initialNotebooks: seeded.notebooks,
+      ));
+      await tester.pumpAndSettle();
+      return seeded.notebooks;
+    }
+
+    testWidgets('a double-click on one notebook does not duplicate its page', (
+      tester,
+    ) async {
+      final notebooks = await pumpSeeded(tester);
+      final label = notebooks.first.title;
+
+      // Both taps before a frame is built — what a trackpad double-click does.
+      await tester.tap(tileWithLabel(label));
+      await tester.tap(tileWithLabel(label));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(NotebookDetailPage), findsOneWidget);
+    });
+
+    testWidgets('back, then the same notebook again, still works', (
+      tester,
+    ) async {
+      final notebooks = await pumpSeeded(tester);
+      final label = notebooks.first.title;
+
+      await tester.tap(tileWithLabel(label));
+      await tester.pumpAndSettle();
+      expect(find.byType(NotebookDetailPage), findsOneWidget);
+
+      // Escape is the shell's back affordance (FR11/AC16).
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(NotebookDetailPage), findsNothing,
+          reason: 'Escape must pop back to the list');
+      expect(find.byType(NotebooksHomePage), findsOneWidget);
+      expect(tileWithLabel(label), findsOneWidget, reason: 'back to the list');
+
+      await tester.tap(tileWithLabel(label));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(NotebookDetailPage), findsOneWidget,
+          reason: 'the guard must not latch: re-entering after back is a new '
+              'navigation, not a repeat');
+    });
+
+    testWidgets('a rapid tap on two different notebooks navigates', (
+      tester,
+    ) async {
+      final notebooks = await pumpSeeded(tester);
+
+      // Two different targets with no frame between them. A debounce-based fix
+      // would swallow the second and land on the wrong notebook; this proves the
+      // guard compares locations rather than swallowing repeats.
+      await tester.tap(tileWithLabel(notebooks[0].title));
+      await tester.tap(tileWithLabel(notebooks[1].title));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      final detail = tester.widget<NotebookDetailPage>(
+        find.byType(NotebookDetailPage),
+      );
+      expect(detail.notebookId, notebooks[1].id,
+          reason: 'the last tap wins');
+    });
+
+    testWidgets('three taps in a row leave exactly one page', (tester) async {
+      final notebooks = await pumpSeeded(tester);
+      final label = notebooks.first.title;
+
+      await tester.tap(tileWithLabel(label));
+      await tester.tap(tileWithLabel(label));
+      await tester.tap(tileWithLabel(label));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(NotebookDetailPage), findsOneWidget);
+    });
+
+    testWidgets('Add Notebook still creates and opens the new notebook', (
+      tester,
+    ) async {
+      await pumpSeeded(tester);
+      final before = tester.widgetList<NavDestinationTile>(
+        find.byType(NavDestinationTile),
+      ).length;
+
+      await tester.tap(tileWithLabel('Add Notebook'));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(NotebookDetailPage), findsOneWidget);
+      expect(
+        tester.widgetList<NavDestinationTile>(find.byType(NavDestinationTile)).length,
+        greaterThanOrEqualTo(before),
+      );
     });
   });
 

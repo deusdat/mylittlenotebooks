@@ -38,6 +38,19 @@ dependencies:
   go_router: ^18.0.2
   shared_preferences: ^2.5.5
 
+  # Local-first library storage. The three ObjectBox packages share a native
+  # core and must be bumped in lockstep (spec plan R3).
+  objectbox: ^5.3.2
+  objectbox_flutter_libs: ^5.3.2
+  path_provider: ^2.1.6
+
+  # RFC 4122/9562 UUIDs. Provides v7 (time-ordered, 62 bits of randomness)
+  # and — the reason it is here — parse/validate, which the *receive* side needs
+  # to reject a malformed uuid arriving from a peer. Its own dependencies,
+  # crypto and fixnum, are already resolved in this project's lock file, so it
+  # adds no transitive package. See docs/sync-conventions.md.
+  uuid: ^4.6.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -49,6 +62,16 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   shared_preferences_platform_interface: ^2.4.2
+
+  # ObjectBox code generation.
+  #
+  # The build_runner upper bound is LOAD-BEARING. objectbox_generator 5.3.2
+  # allows analyzer <11.0.0, while build_runner >=2.15.2 requires
+  # analyzer >=13.3.0. The ranges do not overlap, so no currently-published
+  # version of both exists and `build_runner: ^2.16.1` fails the solver
+  # outright. Widening this bound is not a routine upgrade (spec plan R1).
+  objectbox_generator: ^5.3.2
+  build_runner: ">=2.12.0 <2.15.2"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -17,16 +17,51 @@ jobs:
           channel: stable
           flutter-version: 3.47.0
           cache: true
+      - name: Install the ObjectBox native library
+        # objectbox_flutter_libs covers apps, not the Dart VM that runs tests.
+        # Without this, every test fails at load with a dlopen error — which
+        # reads as a broken suite rather than a missing setup step.
+        #
+        # Fetched from the tag matching the pinned objectbox version, NOT from
+        # main: the script on main hardcodes cLibVersion=6.0.0-beta, which pairs
+        # a newer C library with our 5.3.2 Dart bindings. The script's own
+        # header warns that a mismatch produces obscure memory bugs rather than
+        # an error. The version is read from pubspec.yaml so this cannot drift.
+        run: |
+          version=$(grep -E '^\s+objectbox:' pubspec.yaml | head -1 \
+            | sed -E 's/.*\^?([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+          curl -sL "https://raw.githubusercontent.com/objectbox/objectbox-dart/v${version}/install.sh" -o install.sh
+          bash install.sh
       - name: Analyze
         run: flutter analyze
       - name: Test
         run: flutter test
+      - name: Verify the generated model is committed and current
+        # AC19: a clean checkout must build without running codegen. These
+        # assertions replaced the previous `! grep build_runner` checks, which
+        # encoded the pre-codegen state of this repository.
+        run: |
+          git ls-files --error-unmatch lib/objectbox.g.dart lib/objectbox-model.json
+          # Regenerating must be a no-op, so a stale model fails here rather
+          # than shipping silently.
+          make codegen
+          git diff --exit-code -- lib/objectbox.g.dart lib/objectbox-model.json
+      - name: Verify the dependency pins
+        # build_runner's upper bound is load-bearing: objectbox_generator caps
+        # analyzer below what build_runner >=2.15.2 requires, so a caret range
+        # would fail the solver (docs/data-conventions.md).
+        run: |
+          grep -q 'build_runner: ">=2.12.0 <2.15.2"' pubspec.yaml
+          grep -q 'objectbox: ^5.3.2' pubspec.yaml
+          grep -q 'objectbox_generator: ^5.3.2' pubspec.yaml
+          grep -q 'objectbox_flutter_libs: ^5.3.2' pubspec.yaml
 
   build-desktop:
     name: Build ${{ matrix.target }}
     # AC20 requires the shell to build and run on all three desktop targets.
     # This job is the actual verification for Windows and Linux, which cannot be
-    # built on a single developer machine.
+    # built on a single developer machine. It now also proves the ObjectBox
+    # native library links on each of them (spec NFR1).
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -53,9 +88,9 @@ jobs:
       - name: Build ${{ matrix.target }}
         run: flutter build ${{ matrix.target }} --debug
 
-      - name: Verify the build has no code-generation step
-        # The project has no build_runner and no generated sources; a build that
-        # needed one would mean that changed.
+      - name: Verify the build needs no code-generation step
+        # The inverse of the previous assertion: the project now HAS generated
+        # sources, and they must be committed so a build never needs codegen.
         run: |
-          ! grep -q build_runner pubspec.lock
-          ! grep -rq "part '.*\.g\.dart'" lib
+          grep -q build_runner pubspec.lock
+          git ls-files --error-unmatch lib/objectbox.g.dart

@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
+import 'package:mylittlenotebooks/data/objectbox/objectbox_store.dart';
+import 'package:mylittlenotebooks/data/objectbox_notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
 import 'package:mylittlenotebooks/data/prefs_panel_state_store.dart';
 import 'package:mylittlenotebooks/models/notebook.dart';
@@ -7,9 +9,15 @@ import 'package:mylittlenotebooks/models/notebook.dart';
 /// Everything the widget tree needs, constructed before `runApp`.
 ///
 /// Dependencies are passed by constructor argument rather than resolved from a
-/// service locator (spec NFR3). The one thing that genuinely must happen before
-/// the first frame is the panel's stored intent, because the panel has to render
-/// at the right width immediately (spec AC8, AC9).
+/// service locator (spec NFR3). The two things that genuinely must happen
+/// before the first frame are the panel's stored intent, because the panel has
+/// to render at the right width immediately (spec AC8, AC9), and the library
+/// store, because ObjectBox refuses to open the same directory twice.
+///
+/// The store itself is **not** exposed here. Bootstrap owns it and hands out
+/// repositories; a caller that needs a store builds its own repositories over
+/// `openTestStore()` instead. That keeps `lib/` free of ObjectBox types outside
+/// the data layer (spec NFR5).
 class BootstrapResult {
   final PanelStateStore store;
   final NotebookRepository notebooks;
@@ -26,11 +34,14 @@ class BootstrapResult {
 
 BootstrapResult? _cached;
 
-/// Reads the stored panel intent and builds the repositories.
+/// Reads the stored panel intent, opens the library store, and builds the
+/// repositories.
 ///
-/// Awaited in `main()` before `runApp`, which is what lets `usePanelState` seed
-/// `useState` synchronously and makes a launch-time flash impossible. Cached so
-/// a hot restart cannot rebuild the store or throw on re-registration.
+/// Awaited in `main()` before `runApp`. Cached so a hot restart cannot rebuild
+/// the store or throw on re-registration (spec NFR2).
+///
+/// Pass `notebooks` to substitute a repository — the shell tests do this, which
+/// is why no store is opened when one is supplied.
 Future<BootstrapResult> bootstrapDependencies({
   PanelStateStore? store,
   NotebookRepository? notebooks,
@@ -39,10 +50,22 @@ Future<BootstrapResult> bootstrapDependencies({
   if (cached != null) return cached;
 
   final resolvedStore = store ?? PrefsPanelStateStore();
-  final seeded = notebooks == null
-      ? seededRepository()
-      : (repository: notebooks, notebooks: notebooks.list());
   final collapsed = await resolvedStore.readCollapsed();
+
+  final NotebookRepository resolvedNotebooks;
+  final List<Notebook> initial;
+  if (notebooks != null) {
+    resolvedNotebooks = notebooks;
+    initial = notebooks.list();
+  } else {
+    // Opened exactly once, before the first frame.
+    final repo = ObjectBoxNotebookRepository(await openLibraryStore());
+    for (final _ in seedTitles) {
+      repo.create();
+    }
+    resolvedNotebooks = repo;
+    initial = repo.list();
+  }
 
   assert(() {
     debugPrint('[bootstrap] panelCollapsed=$collapsed');
@@ -51,10 +74,14 @@ Future<BootstrapResult> bootstrapDependencies({
 
   final result = BootstrapResult(
     store: resolvedStore,
-    notebooks: seeded.repository,
-    initialNotebooks: seeded.notebooks,
+    notebooks: resolvedNotebooks,
+    initialNotebooks: initial,
     panelCollapsed: collapsed,
   );
   _cached = result;
   return result;
 }
+
+/// The seeded notebook titles, preserved verbatim from the shell spec (D10) so
+/// a fresh launch looks the same as it did before the store became durable.
+const seedTitles = ['Notebook 1', 'Notebook 2', 'Notebook 3'];

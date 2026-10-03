@@ -28,7 +28,7 @@ class NavPanelListLevel extends HookWidget {
           // appended at the end of the list and immediately navigated to.
           onTap: () {
             final notebook = notebooks.create();
-            router.push('/notebook/${notebook.id}');
+            _openNotebook(router, notebook.id);
           },
         ),
         Expanded(
@@ -57,7 +57,7 @@ class NavPanelListLevel extends HookWidget {
                       label: notebook.title,
                       collapsed: collapsed,
                       order: 2.0 + index,
-                      onTap: () => router.push('/notebook/${notebook.id}'),
+                      onTap: () => _openNotebook(router, notebook.id),
                     );
                   },
                 ),
@@ -66,4 +66,36 @@ class NavPanelListLevel extends HookWidget {
       ],
     );
   }
+}
+
+/// Pushes the route for [notebookId], unless it is already on the stack.
+///
+/// **A `push` appends, and every notebook page carries a stable per-notebook key**
+/// (`ValueKey('notebook-$notebookId')` — spec AC13, so each notebook keeps its own
+/// route state and back restores scroll position). Those two facts together mean a
+/// repeated push of the same notebook puts **two pages with the same key** into
+/// one `Navigator`, which Flutter rejects outright:
+///
+/// ```
+/// Failed assertion: line 4096 pos 18: '!keyReservation.contains(key)': is not true.
+/// ```
+///
+/// One stray double-click reaches it. The nav panel is a `ListView` of tiles whose
+/// `onTap` is `push`, and both taps of a double-click are delivered before the
+/// next frame is built — so the panel has not yet rebuilt into the detail level
+/// that would otherwise hide the tile and make a second tap impossible.
+///
+/// The alternative fixes are both worse. `go` replaces the stack, which would
+/// break FR9/D3: a real push is what makes platform back affordances work, and
+/// there is a whole acceptance criterion (AC13) about back restoring the list.
+/// Making the key unique per push would silence the assertion and leave five
+/// identical notebook pages stacked from five clicks.
+///
+/// So the push stays and becomes idempotent. Deliberately **not** a debounce: a
+/// debounce would also swallow a deliberate rapid tap on a *different* notebook,
+/// which is a real navigation the user asked for.
+void _openNotebook(GoRouter router, String notebookId) {
+  final location = '/notebook/$notebookId';
+  if (router.state.uri.path == location) return;
+  router.push(location);
 }

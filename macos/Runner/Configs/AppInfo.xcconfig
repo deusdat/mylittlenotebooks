@@ -1,14 +1,37 @@
 // Application-level settings for the Runner target.
 //
 // This may be replaced with something auto-generated from metadata (e.g., pubspec.yaml) in the
-// future. If not, the values below would default to using the project name when this becomes a
+// future, If not, the values below would default to using the project name when this becomes a
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
 PRODUCT_NAME = mylittlenotebooks
 
-// The application's bundle identifier
+// The application's bundle identifier.
+//
+// ⚠️  STILL THE TEMPLATE PLACEHOLDER. `com.example.*` cannot be submitted to
+// the Mac App Store — change it to an identifier you own, e.g.
+// `com.yourdomain.mylittlenotebooks`, in Xcode (Runner → Signing & Capabilities
+// → Bundle Identifier).
+//
+// The App Group below should be namespaced under the same domain. Renaming the
+// bundle id after the App Group has been registered in the Apple Developer
+// portal means re-registering the group too.
 PRODUCT_BUNDLE_IDENTIFIER = com.example.mylittlenotebooks
+
+// Your Apple Developer team identifier.
+//
+// ⚠️  NOT SET. ObjectBox **cannot open a store on a sandboxed macOS app
+// without an App Group**, and an App Group is a signing-gated capability — so
+// without a team this project does not build:
+//
+//   "Runner" has entitlements that require signing with a development certificate.
+//
+// To fix: find your team id at https://developer.apple.com/account (it looks
+// like ABCDE12345) and put it below. Xcode's Signing & Capabilities editor
+// writes the same value into project.pbxproj; setting it here as well keeps the
+// two from disagreeing.
+DEVELOPMENT_TEAM =
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.

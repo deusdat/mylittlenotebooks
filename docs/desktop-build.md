@@ -65,3 +65,22 @@ matches:
 
 The only platform-conditional code in the app is the collapse shortcut modifier
 (`Cmd+B` on Apple platforms, `Ctrl+B` elsewhere). Nothing about the layout varies.
+
+## AI endpoint tokens (the keychain)
+
+AI endpoint tokens are stored with `flutter_secure_storage`, **not** in
+`shared_preferences` or the ObjectBox file. Per platform:
+
+| Platform | Mechanism | Build/runtime need |
+|---|---|---|
+| macOS | Keychain (legacy; data-protection keychain disabled) | none |
+| Windows | Credential Manager / DPAPI | none |
+| Linux | libsecret | `libsecret-1-dev` to build; `libsecret-1-0` + a keyring (`gnome-keyring`/`kwallet`) to run |
+
+**macOS trap.** If the data-protection keychain is used while the app also
+carries an App Group, a token can appear to write successfully and never
+actually land unless the App Group is in `keychain-access-groups` — a silent
+failure. This app disables the data-protection keychain
+(`MacOsOptions(usesDataProtectionKeychain: false)`) and so needs no extra
+entitlement. Verify on a real run: write a token, restart, read it back. No
+automated test can cover it. See [`settings-conventions.md`](./settings-conventions.md).

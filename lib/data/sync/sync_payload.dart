@@ -314,8 +314,71 @@ class PublicationDto {
   }
 }
 
-/// A delete, as it travels.
+/// One AI endpoint configuration as it travels (settings-for-ai FR11).
 ///
+/// [token] is present **only when [shared] is true**. An unshared record is not
+/// an upsert at all: it tells the receiver to remove its copy of the tuple
+/// (FR13), which is why it still carries a uuid and a version but no secret.
+///
+/// A **delete** is not expressed here; it uses the existing [DeleteDto] like
+/// every other record type.
+class AiConfigDto {
+  final String uuid;
+  final String label;
+  final String endpoint;
+  final bool shared;
+
+  /// The bearer token, or null. Never logged; see [SyncPayloadException].
+  final String? token;
+
+  final VersionDto version;
+
+  const AiConfigDto({
+    required this.uuid,
+    required this.label,
+    required this.endpoint,
+    required this.shared,
+    required this.version,
+    this.token,
+  });
+
+  Map<String, Object?> toJson() => {
+        'uuid': uuid,
+        'label': label,
+        'endpoint': endpoint,
+        'shared': shared,
+        if (token != null) 'token': token,
+        'v': version.toJson(),
+      };
+
+  static AiConfigDto? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final version = VersionDto.fromJson(raw['v']);
+    final uuid = raw['uuid'];
+    final label = raw['label'];
+    final endpoint = raw['endpoint'];
+    final shared = raw['shared'];
+    final token = raw['token'];
+    if (version == null ||
+        uuid is! String ||
+        label is! String ||
+        endpoint is! String ||
+        shared is! bool ||
+        (token != null && token is! String)) {
+      return null;
+    }
+    return AiConfigDto(
+      uuid: uuid,
+      label: label,
+      endpoint: endpoint,
+      shared: shared,
+      version: version,
+      token: token as String?,
+    );
+  }
+}
+
+/// A delete, as it travels.///
 /// Just a uuid and a version. It carries nothing about the deleted object's
 /// children, because the receiver derives all of them **locally** from its own
 /// int: chunks by `publicationId`, the document by its own column, association
@@ -344,16 +407,22 @@ class SyncPayload {
   final List<PublicationDto> publications;
   final List<DeleteDto> deletes;
 
+  /// Shared AI configurations (settings-for-ai FR11). An unshared configuration
+  /// is never a plain upsert; see [AiConfigDto].
+  final List<AiConfigDto> aiConfigs;
+
   const SyncPayload({
     this.notebooks = const [],
     required this.publications,
     required this.deletes,
+    this.aiConfigs = const [],
   });
 
   Map<String, Object?> toJson() => {
         'notebooks': notebooks.map((n) => n.toJson()).toList(),
         'publications': publications.map((p) => p.toJson()).toList(),
         'deletes': deletes.map((d) => d.toJson()).toList(),
+        'aiConfigs': aiConfigs.map((c) => c.toJson()).toList(),
       };
 
   /// Returns null if anything in the payload is malformed. Total by
@@ -363,9 +432,12 @@ class SyncPayload {
     final rawNotebooks = raw['notebooks'] ?? const [];
     final rawPublications = raw['publications'];
     final rawDeletes = raw['deletes'];
+    // Absent means old payloads predate this field; they carry no configs.
+    final rawAiConfigs = raw['aiConfigs'] ?? const [];
     if (rawNotebooks is! List ||
         rawPublications is! List ||
-        rawDeletes is! List) {
+        rawDeletes is! List ||
+        rawAiConfigs is! List) {
       return null;
     }
 
@@ -388,10 +460,17 @@ class SyncPayload {
       if (parsed == null) return null;
       deletes.add(parsed);
     }
+    final aiConfigs = <AiConfigDto>[];
+    for (final entry in rawAiConfigs) {
+      final parsed = AiConfigDto.fromJson(entry);
+      if (parsed == null) return null;
+      aiConfigs.add(parsed);
+    }
     return SyncPayload(
       notebooks: notebooks,
       publications: publications,
       deletes: deletes,
+      aiConfigs: aiConfigs,
     );
   }
 }

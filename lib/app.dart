@@ -1,25 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:mylittlenotebooks/data/ai_config_repository.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
+import 'package:mylittlenotebooks/models/ai_endpoint_config.dart';
 import 'package:mylittlenotebooks/models/notebook.dart';
 import 'package:mylittlenotebooks/router/app_router.dart';
+import 'package:mylittlenotebooks/state/ai_configs_state.dart';
 import 'package:mylittlenotebooks/state/notebooks_state.dart';
 import 'package:mylittlenotebooks/state/panel_state.dart';
+import 'package:mylittlenotebooks/state/use_ai_configs_state.dart';
 import 'package:mylittlenotebooks/state/use_notebooks_state.dart';
 import 'package:mylittlenotebooks/state/use_panel_state.dart';
 import 'package:utopia_hooks/utopia_hooks.dart';
 
 /// The application root.
 ///
-/// Registers only *reactive* state globally. [PanelStateStore] and
-/// [NotebookRepository] are constructor-injected because registering constants
-/// as providers would add indirection without benefit — and would obscure that
-/// the app has no service locator at all (spec NFR3).
+/// Registers only *reactive* state globally. [PanelStateStore],
+/// [NotebookRepository], and [AiConfigRepository] are constructor-injected
+/// because registering constants as providers would add indirection without
+/// benefit — and would obscure that the app has no service locator at all
+/// (spec NFR3).
 class App extends HookWidget {
   final bool preloadedCollapsed;
   final PanelStateStore store;
   final NotebookRepository repo;
   final List<Notebook> initialNotebooks;
+  final AiConfigRepository aiConfigs;
+  final List<AiEndpointConfig> initialAiConfigs;
 
   const App({
     super.key,
@@ -27,6 +34,8 @@ class App extends HookWidget {
     required this.store,
     required this.repo,
     required this.initialNotebooks,
+    required this.aiConfigs,
+    required this.initialAiConfigs,
   });
 
   @override
@@ -49,6 +58,10 @@ class App extends HookWidget {
             usePanelState(preloaded: preloadedCollapsed, store: store),
         NotebooksState: () =>
             useNotebooksState(repo: repo, preloaded: initialNotebooks),
+        AiConfigsState: () => useAiConfigsState(
+              repo: aiConfigs,
+              preloaded: initialAiConfigs,
+            ),
       },
       child: MaterialApp.router(
         title: 'My Little Notebooks',

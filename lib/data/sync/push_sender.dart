@@ -1,10 +1,13 @@
 import 'dart:convert';
 
+import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_peer_watermark.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
+import 'package:mylittlenotebooks/data/secrets/flutter_secure_token_store.dart';
+import 'package:mylittlenotebooks/data/secrets/token_store.dart';
 import 'package:mylittlenotebooks/data/sync/device_id.dart';
 import 'package:mylittlenotebooks/data/sync/sync_codec.dart';
 import 'package:mylittlenotebooks/data/sync/sync_payload.dart';
@@ -32,14 +35,25 @@ import 'package:mylittlenotebooks/objectbox.g.dart';
 /// rather than defaulted to zero, because "never pushed to" and "fully up to
 /// date" are opposite situations that a zero default would conflate.
 class PushSender {
-  PushSender({required Store store, String? deviceId, TombstoneStore? tombstones})
-      : _store = store,
+  PushSender({
+    required Store store,
+    String? deviceId,
+    TombstoneStore? tombstones,
+    TokenStore? tokens,
+  })  : _store = store,
         _deviceId = deviceId ?? resolveDeviceId(store),
-        _tombstones = tombstones ?? TombstoneStore(store);
+        _tombstones = tombstones ?? TombstoneStore(store),
+        _tokens = tokens ?? FlutterSecureTokenStore();
 
   final Store _store;
   final String _deviceId;
   final TombstoneStore _tombstones;
+
+  /// The secret store used to fill [AiConfigDto.token] for shared tuples.
+  ///
+  /// It is only read for the handful of shared tuples a given push selects, and
+  /// never during selection itself (plan I3). Tests inject a fake.
+  final TokenStore _tokens;
 
   /// What [peerDeviceId] has acknowledged for [recordUuid], or null when it has
   /// never been sent.
@@ -105,6 +119,21 @@ class PushSender {
         existing,
       );
     }
+    for (final config in payload.aiConfigs) {
+      // Including an unshared record: recording its version is what stops the
+      // "remove this tuple" instruction being re-sent on every later push.
+      final existing = _watermarkRow(peerDeviceId, config.uuid);
+      _write(
+        peerDeviceId,
+        config.uuid,
+        SentCounters(
+          metadata: config.version.counter,
+          chunkSet: 0,
+          document: 0,
+        ),
+        existing,
+      );
+    }
   }
 
   /// Forgets everything about [peerDeviceId].
@@ -132,7 +161,18 @@ class PushSender {
   ///
   /// A publication is included when *any* of its three axes moved, since the
   /// record has to travel to carry whichever one did.
-  SyncPayload selectDelta(String peerDeviceId) {
+  ///
+  /// **AI configurations (settings-for-ai FR12, FR13).** [tokens] supplies the
+  /// secrets for the shared tuples this selection includes; [push] preloads it.
+  /// A shared tuple is included when its version moved. An **unshared** tuple is
+  /// included **only when this peer already has a watermark row for it** — that
+  /// is, it was shared with this peer before and the record says "remove your
+  /// copy". A tuple that was never shared must not appear at all, or every
+  /// private configuration would be broadcast as a removal on the first push.
+  SyncPayload selectDelta(
+    String peerDeviceId, {
+    Map<String, String> tokens = const {},
+  }) {
     // Notebooks first: they are the roots of the DAG (FR7).
     final notebooks = <NotebookDto>[];
     final notebookQuery = _notebooks.query().build();
@@ -193,11 +233,70 @@ class PushSender {
       ));
     }
 
+    // AI configurations (settings-for-ai FR12, FR13).
+    final aiConfigs = <AiConfigDto>[];
+    final configQuery = _aiConfigs.query().build();
+    try {
+      for (final config in configQuery.find()) {
+        final sent = sentTo(peerDeviceId, config.uuid);
+        if (config.shared) {
+          if (!_moved(sent?.metadata, config.versionCounter)) continue;
+          aiConfigs.add(AiConfigDto(
+            uuid: config.uuid,
+            label: config.label,
+            endpoint: config.endpoint,
+            shared: true,
+            token: tokens[config.uuid],
+            version: VersionDto(
+              counter: config.versionCounter,
+              deviceId: _deviceId,
+            ),
+          ));
+        } else {
+          // Unshare. Only meaningful if this peer was told about the tuple
+          // before; a tuple that was never shared must never travel.
+          if (sent == null || !_moved(sent.metadata, config.versionCounter)) {
+            continue;
+          }
+          aiConfigs.add(AiConfigDto(
+            uuid: config.uuid,
+            label: config.label,
+            endpoint: config.endpoint,
+            shared: false,
+            version: VersionDto(
+              counter: config.versionCounter,
+              deviceId: _deviceId,
+            ),
+          ));
+        }
+      }
+    } finally {
+      configQuery.close();
+    }
+
     return SyncPayload(
       notebooks: notebooks,
       publications: publications,
       deletes: deletes,
+      aiConfigs: aiConfigs,
     );
+  }
+
+  /// The uuids of shared configurations whose version moved for [peerDeviceId].
+  ///
+  /// Selection is synchronous; the token read is not. This lets [push] resolve
+  /// only the secrets it actually needs, in one batch, before it selects.
+  Iterable<String> _sharedConfigUuidsMovedFor(String peerDeviceId) sync* {
+    final query = _aiConfigs.query().build();
+    try {
+      for (final config in query.find()) {
+        if (!config.shared) continue;
+        final sent = sentTo(peerDeviceId, config.uuid);
+        if (_moved(sent?.metadata, config.versionCounter)) yield config.uuid;
+      }
+    } finally {
+      query.close();
+    }
   }
 
   /// Selects the delta, hands it to [deliver], and records the acknowledgement
@@ -210,7 +309,9 @@ class PushSender {
     String peerDeviceId,
     Future<void> Function(String encoded) deliver,
   ) async {
-    final payload = selectDelta(peerDeviceId);
+    // Resolve the shared tuples' secrets first, then select synchronously.
+    final tokens = await _tokens.readMany(_sharedConfigUuidsMovedFor(peerDeviceId));
+    final payload = selectDelta(peerDeviceId, tokens: tokens);
     final encoded = encodePayload(payload);
     await deliver(encoded);
     // Only now. Everything above this line can fail and be retried.
@@ -362,6 +463,7 @@ class PushSender {
   Box<ObDocument> get _documents => _store.box<ObDocument>();
   Box<ObChunk> get _chunks => _store.box<ObChunk>();
   Box<ObNotebook> get _notebooks => _store.box<ObNotebook>();
+  Box<ObAiConfig> get _aiConfigs => _store.box<ObAiConfig>();
   Box<ObPeerWatermark> get _watermarks => _store.box<ObPeerWatermark>();
 }
 

@@ -217,7 +217,8 @@ void main() {
               'same one');
     });
 
-    test('the receiver ends in the same state after one push and after two', () {
+    test('the receiver ends in the same state after one push and after two',
+        () async {
       final receiver = openTestStore('push-ac5');
       addTearDown(receiver.close);
       final applier = SyncApplier(
@@ -228,9 +229,9 @@ void main() {
       indexedPublication(chunkCount: 4);
       final encoded = encodePayload(sender.selectDelta(peer));
 
-      applier.ingestEncoded(encoded);
+      await applier.ingestEncoded(encoded);
       final afterOne = storeSnapshot(receiver);
-      applier.ingestEncoded(encoded);
+      await applier.ingestEncoded(encoded);
       final afterTwo = storeSnapshot(receiver);
 
       expect(afterTwo, afterOne);

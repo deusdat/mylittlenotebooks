@@ -339,6 +339,45 @@ notebook `DeleteDto`. The exclusive publications it cascaded arrive as their own
 delete records, so the receiver needs no notion of exclusivity — see **Deletes**
 above.
 
+## AI configs: applied, refused, unshared, deleted
+
+The payload carries a **fifth entity type**, `AiConfigDto` (settings-for-ai).
+It has **no relation sites** — a tuple references nothing — so the seven-site
+list above is unaffected.
+
+The important difference from every other record type is that a config has
+**four** outcomes, not two. The `shared` flag decides:
+
+| Incoming | Local | Outcome |
+|---|---|---|
+| `shared: true` | anything | upsert (LWW); the token travels and is written |
+| `shared: false` | present | **removed** — the row and the token go |
+| `shared: false` | absent | no-op (never creates a row) |
+| tombstoned uuid | anything | refused, with **no version comparison** (FR14) |
+
+**An unshare is not a delete.** It is a record that says "not for you"; the
+sender's tuple is still alive and may be re-shared. Implementing it as a
+tombstone would make the uuid permanently unresurrectable and break re-sharing,
+so `isDead` is not called on the unshare path.
+
+**A private tuple never travels.** Selection includes an unshared record **only
+when the peer already has a watermark for that uuid** — that is, it was shared
+with that peer before. Without that guard, every private configuration would be
+broadcast as a "remove this" record on the first push. A test removes the guard
+and asserts the never-shared case fails.
+
+A **deleted** tuple is ordinary: it is tombstoned locally and travels as a
+`DeleteDto`, resolved as the third branch of `_applyDelete` (notebook,
+publication, config). The receiver removes the row and writes the tombstone.
+
+### Secrets are flushed separately from the rows
+
+`SyncApplier.ingest` applies ObjectBox rows synchronously and collects the token
+operations it implies; `ingestEncoded` is the async entry point that then writes
+or deletes them. A caller that used `ingest` alone and skipped the flush would
+leave a shared tuple without its token. See
+[`settings-conventions.md`](./settings-conventions.md).
+
 ## `ToMany.removeWhere`, not `remove`
 
 Inherited from the data layer and equally load-bearing here.

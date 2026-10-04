@@ -54,6 +54,14 @@ download/
 # Widget Preview related
 .widget_preview/
 
-# ObjectBox generated model (regenerate with `make codegen`)
+# ObjectBox `objectbox-model.json` is NOT ignored. It is the schema registry:
+# ObjectBox mints a UID for every entity/property/relation once and stores it
+# there, and the native core matches by UID to migrate an existing database.
+# Losing or regenerating it mints new UIDs and breaks every existing store.
+# It MUST be committed. (ObjectBox's own note in the file says so.)
+# See docs/data-conventions.md.
+#
+# `objectbox.g.dart` is pure generated Dart, derived from the model plus the
+# entity classes. It is safe to ignore; run `make codegen` after checkout and
+# after any entity change to produce it.
 lib/objectbox.g.dart
-lib/objectbox-model.json

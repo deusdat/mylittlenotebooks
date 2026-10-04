@@ -105,7 +105,7 @@ void main() {
               'is irrelevant');
     });
 
-    test('AC7e: truncation is detected end to end, through the wire', () {
+    test('AC7e: truncation is detected end to end, through the wire', () async {
       // The declaration has to survive encoding and be read back at the receive
       // boundary. A validator test that builds a DTO in memory proves neither,
       // and it stays green with the field deleted from the protocol — which is
@@ -114,8 +114,8 @@ void main() {
       final truncated = encodePayload(payloadOf([
         testPublication(uuid: newUuidV7(), count: 30, declared: 50),
       ]));
-      expect(
-        () => applier.ingestEncoded(truncated),
+      await expectLater(
+        applier.ingestEncoded(truncated),
         throwsA(isA<ChunkSetRejection>()),
         reason: '30 contiguous chunks with a declaration of 50 must be refused',
       );
@@ -126,7 +126,7 @@ void main() {
       final complete = encodePayload(payloadOf([
         testPublication(uuid: newUuidV7(), count: 30, declared: 30),
       ]));
-      expect(() => applier.ingestEncoded(complete), returnsNormally);
+      await expectLater(applier.ingestEncoded(complete), completes);
     });
 
     test('AC7d: a payload declaring 0 and delivering nothing is accepted', () {
@@ -731,11 +731,11 @@ void main() {
   });
 
   group('encoded payloads', () {
-    test('ingestEncoded round-trips through the codec', () {
+    test('ingestEncoded round-trips through the codec', () async {
       final dto = testPublication(uuid: newUuidV7(), count: 3);
       final encoded = encodePayload(payloadOf([dto]));
 
-      final result = applier.ingestEncoded(encoded);
+      final result = await applier.ingestEncoded(encoded);
 
       expect(result.publicationsApplied, 1);
       expect(pubByUuid(dto.uuid).chunkCount, 3);

@@ -51,6 +51,12 @@ dependencies:
   # adds no transitive package. See docs/sync-conventions.md.
   uuid: ^4.6.0
 
+  # The platform secret store for AI endpoint tokens (settings-for-ai FR3).
+  # Resolves to Keychain on iOS/macOS, Keystore-backed EncryptedSharedPreferences
+  # on Android, Credential Manager/DPAPI on Windows, and libsecret on Linux.
+  # The token is *never* an ObjectBox column; see docs/settings-conventions.md.
+  flutter_secure_storage: ^11.2.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -62,6 +68,12 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   shared_preferences_platform_interface: ^2.4.2
+
+  # Used to drive FlutterSecureTokenStore in-memory in tests (AGENTS directive:
+  # nothing in the suite touches a real keychain). The plugin ships its own
+  # in-memory TestFlutterSecureStoragePlatform; this is the interface it
+  # implements.
+  flutter_secure_storage_platform_interface: ^2.1.1
 
   # ObjectBox code generation.
   #

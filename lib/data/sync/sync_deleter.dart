@@ -22,6 +22,7 @@
 /// the enclosing transaction).
 library;
 
+import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/data/objectbox_library_repository.dart';
@@ -117,6 +118,37 @@ class SyncDeleter {
   }
 
   SyncVersion _versionOf(int counter) => (counter: counter, deviceId: _deviceId);
+
+  /// Deletes an AI endpoint configuration locally: the row and its tombstone in
+  /// one transaction (settings-for-ai FR9, FR14).
+  ///
+  /// The **token** is not touched here: the keychain cannot share an ObjectBox
+  /// transaction, so the repository deletes it immediately after this call and
+  /// boot reconciliation removes it if that fails (FR18). An absent uuid still
+  /// tombstones, so an in-flight push cannot resurrect a tuple the user deleted.
+  void deleteAiConfigLocally(String uuid) {
+    final config = _findAiConfig(uuid);
+    final version = nextVersion(
+      config == null ? noVersion : _versionOf(config.versionCounter),
+      _deviceId,
+    );
+
+    _store.runInTransaction(TxMode.write, () {
+      if (config != null) _store.box<ObAiConfig>().remove(config.id);
+      _tombstones.markDead(uuid, versionCounter: version.counter);
+      return null;
+    });
+  }
+
+  ObAiConfig? _findAiConfig(String uuid) {
+    final query =
+        _store.box<ObAiConfig>().query(ObAiConfig_.uuid.equals(uuid)).build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
 
   ObNotebook? _findNotebook(String uuid) {
     final query = _store

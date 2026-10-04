@@ -1,8 +1,10 @@
 import 'package:mylittlenotebooks/data/identity.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
+import 'package:mylittlenotebooks/models/ai_endpoint_config.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
 import 'package:mylittlenotebooks/models/notebook.dart';
 import 'package:mylittlenotebooks/models/publication.dart';
@@ -120,3 +122,18 @@ extension ChunkDraftMapping on ChunkDraft {
 /// A separate read so the text is fetched on demand and never as a side effect
 /// of listing publications (spec NFR6).
 String? documentMarkdownOf(ObDocument? document) => document?.markdown;
+
+// --- AI endpoint configuration ----------------------------------------------
+
+extension ObAiConfigMapping on ObAiConfig {
+  /// [hasToken] is supplied by the repository from its token-flag cache rather
+  /// than read here: the mapping is pure and must not reach the secret store
+  /// (settings-for-ai FR4, FR5).
+  AiEndpointConfig toDomain({required bool hasToken}) => AiEndpointConfig(
+        uuid: uuid,
+        label: label,
+        endpoint: endpoint,
+        shared: shared,
+        hasToken: hasToken,
+      );
+}

@@ -73,6 +73,9 @@ String encodePayload(SyncPayload payload) {
   for (final delete in payload.deletes) {
     _requireUuid(delete.uuid, 'delete uuid');
   }
+  for (final config in payload.aiConfigs) {
+    _requireUuid(config.uuid, 'ai config uuid');
+  }
   return json;
 }
 
@@ -110,6 +113,9 @@ SyncPayload decodePayload(String encoded) {
   }
   for (final delete in payload.deletes) {
     _requireUuid(delete.uuid, 'delete uuid');
+  }
+  for (final config in payload.aiConfigs) {
+    _requireUuid(config.uuid, 'ai config uuid');
   }
   return payload;
 }

@@ -421,9 +421,9 @@ void main() {
       final payload = laptop.sender.selectDelta(phone.deviceId);
       final encoded = encodePayload(payload);
 
-      phone.applier.ingestEncoded(encoded);
+      await phone.applier.ingestEncoded(encoded);
       final afterFirst = storeSnapshot(phone.store);
-      phone.applier.ingestEncoded(encoded);
+      await phone.applier.ingestEncoded(encoded);
       expect(storeSnapshot(phone.store), afterFirst);
     });
   });

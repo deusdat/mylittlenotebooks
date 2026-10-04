@@ -20,6 +20,8 @@ Future<void> main() async {
       store: deps.store,
       repo: deps.notebooks,
       initialNotebooks: deps.initialNotebooks,
+      aiConfigs: deps.aiConfigs,
+      initialAiConfigs: deps.initialAiConfigs,
     ),
   );
 }

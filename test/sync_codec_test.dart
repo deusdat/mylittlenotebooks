@@ -122,7 +122,8 @@ void main() {
       ));
       final top = jsonDecode(encoded) as Map<String, dynamic>;
 
-      expect(top.keys.toSet(), {'notebooks', 'publications', 'deletes'});
+      expect(top.keys.toSet(),
+          {'notebooks', 'publications', 'deletes', 'aiConfigs'});
 
       final pub = (top['publications'] as List).single as Map<String, dynamic>;
       expect(

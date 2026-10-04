@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mylittlenotebooks/data/identity.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/objectbox_store.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_device_meta.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
@@ -466,6 +467,13 @@ Map<String, List<String?>> storedStringValues(Store store) {
 
   entries.add(MapEntry('ObTombstone.uuid',
       [for (final t in store.box<ObTombstone>().getAll()) t.uuid]));
+
+  entries.add(MapEntry('ObAiConfig.uuid',
+      [for (final c in store.box<ObAiConfig>().getAll()) c.uuid]));
+  entries.add(MapEntry('ObAiConfig.label',
+      [for (final c in store.box<ObAiConfig>().getAll()) c.label]));
+  entries.add(MapEntry('ObAiConfig.endpoint',
+      [for (final c in store.box<ObAiConfig>().getAll()) c.endpoint]));
 
   entries.add(MapEntry('ObDeviceMeta.value',
       [for (final m in store.box<ObDeviceMeta>().getAll()) m.value]));

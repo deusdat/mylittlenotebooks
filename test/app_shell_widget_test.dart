@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylittlenotebooks/app.dart';
+import 'package:mylittlenotebooks/data/ai_config_repository.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
 import 'package:mylittlenotebooks/models/notebook.dart';
@@ -20,6 +21,8 @@ Widget buildTestApp({bool preloadedCollapsed = false}) {
     store: InMemoryPanelStateStore(initialCollapsed: preloadedCollapsed),
     repo: seeded.repository,
     initialNotebooks: seeded.notebooks,
+    aiConfigs: InMemoryAiConfigRepository(),
+    initialAiConfigs: const [],
   );
 }
 
@@ -277,6 +280,8 @@ void main() {
         store: InMemoryPanelStateStore(),
         repo: seeded.repository,
         initialNotebooks: seeded.notebooks,
+        aiConfigs: InMemoryAiConfigRepository(),
+        initialAiConfigs: const [],
       ));
       await tester.pumpAndSettle();
       return seeded.notebooks;

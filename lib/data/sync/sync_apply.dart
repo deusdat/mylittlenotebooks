@@ -1,8 +1,11 @@
+import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/data/objectbox_library_repository.dart';
+import 'package:mylittlenotebooks/data/secrets/flutter_secure_token_store.dart';
+import 'package:mylittlenotebooks/data/secrets/token_store.dart';
 import 'package:mylittlenotebooks/data/sync/device_id.dart';
 import 'package:mylittlenotebooks/data/sync/sync_codec.dart';
 import 'package:mylittlenotebooks/data/sync/sync_deleter.dart';
@@ -69,10 +72,12 @@ class SyncApplier {
     required this.activeEmbeddingModelId,
     String? deviceId,
     TombstoneStore? tombstones,
+    TokenStore? tokens,
     this.faultHook,
   })  : _store = store,
         _deviceId = deviceId ?? resolveDeviceId(store),
         _tombstones = tombstones ?? TombstoneStore(store),
+        _tokens = tokens ?? FlutterSecureTokenStore(),
         _deleter = SyncDeleter(
           store: store,
           deviceId: deviceId,
@@ -84,6 +89,12 @@ class SyncApplier {
   final ObjectBoxLibraryRepository _library;
   final TombstoneStore _tombstones;
   final SyncDeleter _deleter;
+
+  /// Flushes the deferred token operations an ingest produced (plan I3). Only
+  /// [ingestEncoded] uses it: ObjectBox and the keychain cannot share a
+  /// transaction, so rows commit first and secrets follow.
+  final TokenStore _tokens;
+
   final IngestFaultHook? faultHook;
 
   /// This device's `embeddingModelId`. **The gate compares against this and
@@ -110,6 +121,9 @@ class SyncApplier {
       validateChunkSet(publication);
     }
 
+    // Secret operations the rows imply but cannot perform inside a transaction.
+    final pendingSecrets = <PendingSecret>[];
+
     // 2. Plan. Read-only: it decides, and it resolves nothing.
     final deletes = payload.deletes
         .where((d) => !_tombstones.isDead(d.uuid))
@@ -123,16 +137,24 @@ class SyncApplier {
       if (plan != null) notebookPlans.add(plan);
     }
 
+    // Configurations are independent roots: no relation sites, so their order
+    // relative to publications is free.
+    final configPlans = <_ConfigPlan>[];
+    for (final config in payload.aiConfigs) {
+      final plan = _planConfig(config);
+      if (plan != null) configPlans.add(plan);
+    }
+
     final plans = <_Plan>[];
     for (final publication in payload.publications) {
       final plan = _plan(publication);
       if (plan != null) plans.add(plan);
     }
 
-    // 3. Deletes, then publications. One transaction each.
+    // 3. Deletes, then roots, then publications. One transaction each.
     var deletesApplied = 0;
     for (final delete in deletes) {
-      _applyDelete(delete);
+      _applyDelete(delete, pendingSecrets);
       deletesApplied++;
     }
 
@@ -140,6 +162,17 @@ class SyncApplier {
     for (final plan in notebookPlans) {
       _applyNotebook(plan);
       notebooksApplied++;
+    }
+
+    var configsApplied = 0;
+    var configsRemoved = 0;
+    for (final plan in configPlans) {
+      _applyConfig(plan, pendingSecrets);
+      if (plan.remove) {
+        configsRemoved++;
+      } else {
+        configsApplied++;
+      }
     }
 
     var applied = 0;
@@ -156,12 +189,30 @@ class SyncApplier {
       publicationsSkipped: payload.publications.length - plans.length,
       deletesApplied: deletesApplied,
       vectorsRefused: List.unmodifiable(vectorsRefused),
+      configsApplied: configsApplied,
+      configsRemoved: configsRemoved,
+      pendingSecrets: List.unmodifiable(pendingSecrets),
     );
   }
 
-  /// Decodes then ingests. The declared-count check runs inside [ingest], after
-  /// decoding, because it is a check on decoded records rather than on bytes.
-  IngestResult ingestEncoded(String encoded) => ingest(decodePayload(encoded));
+  /// Decodes, ingests, then flushes the deferred secret operations.
+  ///
+  /// **This is the real receive entry point.** [ingest] applies ObjectBox rows
+  /// only; a caller that used it directly and skipped the secret flush would
+  /// leave a shared tuple without its token (plan R4). Splitting the two is
+  /// forced by the keychain being asynchronous while a transaction is not.
+  Future<IngestResult> ingestEncoded(String encoded) async {
+    final result = ingest(decodePayload(encoded));
+    for (final secret in result.pendingSecrets) {
+      switch (secret) {
+        case SecretWrite(:final uuid, :final token):
+          await _tokens.write(uuid, token);
+        case SecretDelete(:final uuid):
+          await _tokens.delete(uuid);
+      }
+    }
+    return result;
+  }
 
   // --- planning --------------------------------------------------------------
 
@@ -189,6 +240,69 @@ class SyncApplier {
       // `return null` keeps this callback's static type off `Never`; see `_fault`.
       return null;
     });
+  }
+
+  /// Decides what an AI configuration record will do, or null when nothing will
+  /// (settings-for-ai FR13, FR14, FR16).
+  ///
+  /// A tombstone refuses the record outright, with no version comparison
+  /// (FR14). An **unshared** record is not an upsert: it removes the local copy,
+  /// and only when one exists — a removal for something we never had is a no-op.
+  _ConfigPlan? _planConfig(AiConfigDto dto) {
+    if (_tombstones.isDead(dto.uuid)) return null;
+
+    final local = _findConfig(dto.uuid);
+    final localVersion = local == null
+        ? noVersion
+        : (counter: local.versionCounter, deviceId: _deviceId);
+    if (!supersedes(dto.version.toDomain(), localVersion)) return null;
+
+    if (!dto.shared) {
+      return local == null ? null : _ConfigPlan.remove(dto);
+    }
+    return _ConfigPlan.upsert(dto);
+  }
+
+  void _applyConfig(_ConfigPlan plan, List<PendingSecret> pending) {
+    final dto = plan.dto;
+    if (plan.remove) {
+      _store.runInTransaction(TxMode.write, () {
+        final local = _findConfig(dto.uuid);
+        if (local != null) _configs.remove(local.id);
+        return null;
+      });
+      pending.add(SecretDelete(dto.uuid));
+      return;
+    }
+
+    _store.runInTransaction(TxMode.write, () {
+      final existing = _findConfig(dto.uuid);
+      if (existing == null) {
+        _configs.put(ObAiConfig(
+          uuid: dto.uuid,
+          label: dto.label,
+          endpoint: dto.endpoint,
+          shared: true,
+          createdAt: _nowUtc(),
+          versionCounter: dto.version.toDomain().counter,
+        ));
+      } else {
+        existing.label = dto.label;
+        existing.endpoint = dto.endpoint;
+        existing.shared = true;
+        existing.versionCounter = dto.version.toDomain().counter;
+        _configs.put(existing);
+      }
+      return null;
+    });
+
+    // Converge the secret too: a shared record with a token writes it; one
+    // without ensures none is held (the sender has none).
+    if (dto.token != null) {
+      pending.add(SecretWrite(dto.uuid, dto.token!));
+    } else {
+      pending.add(SecretDelete(dto.uuid));
+    }
   }
 
   /// Decides what a single publication record will do, or null when nothing
@@ -352,14 +466,19 @@ class SyncApplier {
   void deleteLocally(String publicationUuid) =>
       _deleter.deletePublicationLocally(publicationUuid);
 
-  void _applyDelete(DeleteDto delete) {
+  void _applyDelete(DeleteDto delete, List<PendingSecret> pending) {
     // A delete record carries **no entity type** (FR15). The uuid is globally
-    // unique, so it is resolved against both boxes here: notebook first, then
-    // publication. The deleting device decided exclusivity and expressed the
-    // result as separate delete records; the receiver obeys them rather than
-    // re-deriving (delete-notebook D2).
+    // unique, so it is resolved against each box here: notebook first, then
+    // publication, then AI configuration (settings-for-ai FR14). The deleting
+    // device decided exclusivity and expressed the result as separate delete
+    // records; the receiver obeys them rather than re-deriving (delete-notebook
+    // D2).
     final notebook = _findNotebook(delete.uuid);
-    final publication = notebook == null ? _findPublication(delete.uuid) : null;
+    final publication =
+        notebook == null ? _findPublication(delete.uuid) : null;
+    final config = notebook == null && publication == null
+        ? _findConfig(delete.uuid)
+        : null;
 
     _store.runInTransaction(TxMode.write, () {
       if (notebook != null) {
@@ -367,8 +486,10 @@ class SyncApplier {
         // are left holding one fewer notebook. Its exclusive publications arrive
         // as their own delete records and take the publication branch below.
         _notebooks.remove(notebook.id);
-      } else {
+      } else if (publication != null) {
         _cascade(publication);
+      } else if (config != null) {
+        _configs.remove(config.id);
       }
 
       // The tombstone goes in **the same transaction** as the delete. Written
@@ -386,6 +507,10 @@ class SyncApplier {
       // carries it again rather than skipping it.
       _tombstones.markDead(delete.uuid, versionCounter: delete.version.counter);
     });
+
+    // A deleted configuration's token goes with it; the keychain is outside the
+    // transaction (plan I3).
+    if (config != null) pending.add(SecretDelete(delete.uuid));
   }
 
   /// The local cascade a delete runs: chunks, document, publication (FR17).
@@ -466,6 +591,7 @@ class SyncApplier {
   Box<ObDocument> get _documents => _store.box<ObDocument>();
   Box<ObChunk> get _chunks => _store.box<ObChunk>();
   Box<ObNotebook> get _notebooks => _store.box<ObNotebook>();
+  Box<ObAiConfig> get _configs => _store.box<ObAiConfig>();
 
   UuidScope get _scope => UuidScope(_store);
 
@@ -476,6 +602,24 @@ class SyncApplier {
     } finally {
       query.close();
     }
+  }
+
+  ObAiConfig? _findConfig(String uuid) {
+    final query = _configs.query(ObAiConfig_.uuid.equals(uuid)).build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  /// UTC, truncated to the millisecond precision the store persists.
+  static DateTime _nowUtc() {
+    final now = DateTime.now().toUtc();
+    return DateTime.fromMillisecondsSinceEpoch(
+      now.millisecondsSinceEpoch,
+      isUtc: true,
+    );
   }
 
   ObPublication? _findPublication(String uuid) {
@@ -555,6 +699,17 @@ class _NotebookPlan {
   const _NotebookPlan({required this.dto, required this.created});
 }
 
+/// One planned AI configuration, in one of two shapes: an upsert (shared) or a
+/// removal (unshared). A removal is not a delete — the tuple is alive on the
+/// sender and may be re-shared (settings-for-ai FR13).
+class _ConfigPlan {
+  final AiConfigDto dto;
+  final bool remove;
+
+  const _ConfigPlan.upsert(this.dto) : remove = false;
+  const _ConfigPlan.remove(this.dto) : remove = true;
+}
+
 /// What an ingest did.
 class IngestResult {
   /// Notebooks written.
@@ -580,18 +735,33 @@ class IngestResult {
   /// "deliberately unindexed" from "never indexed".
   final List<String> vectorsRefused;
 
+  /// Shared AI configurations written (settings-for-ai FR16).
+  final int configsApplied;
+
+  /// AI configurations removed because a peer unshared them (FR13).
+  final int configsRemoved;
+
+  /// Token operations the ObjectBox transactions could not perform, to be
+  /// flushed by [SyncApplier.ingestEncoded] (plan I3). A caller that used the
+  /// synchronous [SyncApplier.ingest] directly must perform these itself.
+  final List<PendingSecret> pendingSecrets;
+
   const IngestResult({
     required this.notebooksApplied,
     required this.publicationsApplied,
     required this.publicationsSkipped,
     required this.deletesApplied,
     required this.vectorsRefused,
+    this.configsApplied = 0,
+    this.configsRemoved = 0,
+    this.pendingSecrets = const [],
   });
 
   @override
   String toString() => 'IngestResult(notebooks: $notebooksApplied, '
       'applied: $publicationsApplied, '
       'skipped: $publicationsSkipped, deleted: $deletesApplied, '
+      'configs: $configsApplied, configsRemoved: $configsRemoved, '
       'vectorsRefused: $vectorsRefused)';
 }
 

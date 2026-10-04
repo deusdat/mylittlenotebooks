@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mylittlenotebooks/app.dart';
+import 'package:mylittlenotebooks/data/ai_config_repository.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
@@ -17,6 +18,8 @@ import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
       store: InMemoryPanelStateStore(),
       repo: repository,
       initialNotebooks: repository.list(),
+      aiConfigs: InMemoryAiConfigRepository(),
+      initialAiConfigs: const [],
     ),
     repo: repository,
   );

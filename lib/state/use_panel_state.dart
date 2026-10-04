@@ -24,14 +24,23 @@ PanelState usePanelState({
   // exactly wrong for a stored user preference.
   final collapsed = useState(preloaded);
 
+  // Transient, never persisted (spec FR15). Separate from `collapsed` because it
+  // must not touch the stored preference when opened or dismissed.
+  final overlayOpen = useState(false);
+
   void toggleCollapsed() {
     final next = !collapsed.value;
     if (!collapsed.setIfMounted(next)) return;
+    // A docked toggle is a real preference change, so persist it. Closing the
+    // overlay is a different action (`closeOverlay`) and writes nothing.
     unawaited(store.writeCollapsed(next));
   }
 
   return PanelState(
     collapsedByUser: collapsed.value,
+    overlayOpen: overlayOpen.value,
     toggleCollapsed: toggleCollapsed,
+    openOverlay: () => overlayOpen.setIfMounted(true),
+    closeOverlay: () => overlayOpen.setIfMounted(false),
   );
 }

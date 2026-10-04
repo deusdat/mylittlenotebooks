@@ -347,8 +347,42 @@ void main() {
     });
   });
 
-  group('AC13 — deleting a notebook never over-deletes', () {
-    test('a shared publication and its chunks survive', () {
+  group('AC2/AC13 — deleting a notebook cascades exclusives only', () {
+    test('an exclusive publication is deleted with its only notebook', () {
+      final only = notebooks.create();
+      final publication = library.create(
+        title: 'Exclusive',
+        sourceMarkdown: 'exclusive',
+        embeddingModelId: model,
+      );
+      library
+        ..attach(publication.uuid, only.id)
+        ..replaceChunks(publication.uuid, [draft(0)]);
+
+      expect(store.box<ObDocument>().count(), 1);
+
+      final cascaded = library.deleteNotebook(only.id);
+
+      expect(notebooks.exists(only.id), isFalse);
+      expect(publications.byUuid(publication.uuid), isNull);
+      expect(
+        store.box<ObDocument>().count(),
+        0,
+        reason: 'the exclusive publication is gone, so its document must be too',
+      );
+      expect(
+        search.search(
+          queryVector: unitVector(0),
+          publicationIds: null,
+          limit: 10,
+        ),
+        isEmpty,
+        reason: 'chunks must not outlive their cascaded publication',
+      );
+      expect(cascaded.map((c) => c.uuid), [publication.uuid]);
+    });
+
+    test('a shared publication survives and stays searchable', () {
       final keep = notebooks.create();
       final drop = notebooks.create();
       final publication = library.create(
@@ -361,10 +395,11 @@ void main() {
         ..attach(publication.uuid, drop.id)
         ..replaceChunks(publication.uuid, [draft(0), draft(1, seed: 1)]);
 
-      library.deleteNotebook(drop.id);
+      final cascaded = library.deleteNotebook(drop.id);
 
       expect(notebooks.exists(drop.id), isFalse);
       expect(notebooks.exists(keep.id), isTrue);
+      expect(cascaded, isEmpty, reason: 'nothing exclusive to cascade');
 
       // The publication itself is untouched...
       expect(publications.byUuid(publication.uuid), isNotNull);
@@ -385,28 +420,28 @@ void main() {
       expect(hits, hasLength(2));
     });
 
-    test('an exclusive publication survives its only notebook', () {
+    test('a notebook with no publications deletes cleanly', () {
+      final empty = notebooks.create();
+      expect(library.deleteNotebook(empty.id), isEmpty);
+      expect(notebooks.exists(empty.id), isFalse);
+    });
+
+    test('the returned counters are the publications\' pre-cascade versions', () {
       final only = notebooks.create();
       final publication = library.create(
-        title: 'Exclusive',
-        sourceMarkdown: 'exclusive',
+        title: 'Versioned',
+        sourceMarkdown: 'versioned',
         embeddingModelId: model,
       );
-      library
-        ..attach(publication.uuid, only.id)
-        ..replaceChunks(publication.uuid, [draft(0)]);
+      library.attach(publication.uuid, only.id);
+      final before = store
+          .box<ObPublication>()
+          .getAll()
+          .single
+          .versionCounter;
 
-      library.deleteNotebook(only.id);
-
-      expect(publications.byUuid(publication.uuid), isNotNull);
-      expect(
-        search.search(
-          queryVector: unitVector(0),
-          publicationIds: search.resolvePublicationIds([publication.uuid]),
-          limit: 10,
-        ),
-        hasLength(1),
-      );
+      final cascaded = library.deleteNotebook(only.id);
+      expect(cascaded.single.versionCounter, before);
     });
   });
 

@@ -13,6 +13,7 @@ import 'dart:isolate';
 
 import 'package:mylittlenotebooks/data/sync/sync_apply.dart';
 import 'package:mylittlenotebooks/data/sync/sync_codec.dart';
+import 'package:mylittlenotebooks/data/sync/sync_deleter.dart';
 import 'package:mylittlenotebooks/data/sync/sync_payload.dart';
 import 'package:mylittlenotebooks/data/sync/sync_tombstones.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
@@ -346,6 +347,87 @@ void main() {
     });
   });
 
+  group('delete-notebook — a notebook and its exclusives converge', () {
+    late Device laptop;
+    late Device phone;
+
+    setUp(() {
+      laptop = Device('del-laptop', 'd-laptop');
+      phone = Device('del-phone', 'd-phone');
+      addTearDown(laptop.dispose);
+      addTearDown(phone.dispose);
+    });
+
+    test('AC8: exclusive gone, shared survives, both stores identical', () async {
+      final notebook = laptop.createNotebook('Doomed');
+      final keeper = laptop.createNotebook('Keeper');
+      final exclusive = laptop.createPublication(
+        title: 'Exclusive',
+        body: 'exclusive body',
+        chunkCount: 2,
+        notebook: notebook,
+      );
+      final shared = laptop.createPublication(
+        title: 'Shared',
+        body: 'shared body',
+        chunkCount: 1,
+        notebook: notebook,
+      );
+      laptop.attach(shared, keeper);
+
+      // Reflect the whole corpus on the phone first.
+      await laptop.pushTo(phone);
+      expect(storeSnapshot(laptop.store), storeSnapshot(phone.store));
+
+      // The user deletes the notebook on the laptop.
+      laptop.deleteNotebook(notebook);
+
+      await converge(laptop, phone);
+
+      // Notebook gone on both; exclusive publication and its chunks gone.
+      expect(phone.readOrNull(exclusive), isNull);
+      expect(phone.chunksOf(exclusive), isEmpty);
+      expect(
+        phone.store
+            .box<ObNotebook>()
+            .query(ObNotebook_.uuid.equals(notebook))
+            .build()
+            .find(),
+        isEmpty,
+      );
+
+      // Shared publication alive with its surviving edge and searchable.
+      expect(phone.readOrNull(shared), isNotNull);
+      expect(phone.read(shared).notebooks.map((n) => n.uuid), [keeper]);
+
+      expect(
+        storeSnapshot(laptop.store),
+        storeSnapshot(phone.store),
+        reason: 'the delete-notebook cascade must converge byte for byte',
+      );
+    });
+
+    test('AC7: re-ingesting the delete changes nothing', () async {
+      final notebook = laptop.createNotebook('Once');
+      laptop.createPublication(
+        title: 'Only',
+        body: 'body',
+        chunkCount: 1,
+        notebook: notebook,
+      );
+      await laptop.pushTo(phone);
+
+      laptop.deleteNotebook(notebook);
+      final payload = laptop.sender.selectDelta(phone.deviceId);
+      final encoded = encodePayload(payload);
+
+      phone.applier.ingestEncoded(encoded);
+      final afterFirst = storeSnapshot(phone.store);
+      phone.applier.ingestEncoded(encoded);
+      expect(storeSnapshot(phone.store), afterFirst);
+    });
+  });
+
   group('AC15 — nothing outside this process is involved', () {
     test('two stores, no files, no network', () {
       final a = Device('hermetic-a', 'd-a');
@@ -468,6 +550,12 @@ class Device {
   /// The local delete path, which cascades *and* stamps a tombstone with a
   /// version so the delete can be selected into a later push.
   void delete(String uuid) => applier.deleteLocally(uuid);
+
+  /// Deletes a notebook locally: the notebook and its exclusive publications,
+  /// each tombstoned, in one transaction.
+  void deleteNotebook(String uuid) =>
+      SyncDeleter(store: store, deviceId: deviceId, tombstones: tombstones)
+          .deleteNotebookLocally(uuid);
 
   /// Applies a payload built in the test rather than selected from this device.
   void ingestDirect(PublicationDto dto) => applier.ingest(SyncPayload(

@@ -314,14 +314,20 @@ implementation; `removeWhere` on the id is what actually expresses the intent.
 | `replaceChunks` | remove stale → insert new → update `chunkCount` |
 | `deletePublication` | chunks + document + publication |
 | `attach` / `detach` | the `ToMany` mutation |
-| `deleteNotebook` | the association only |
+| `deleteNotebook` | notebook + each **exclusive** publication (chunks + document) |
 
 `chunkCount` is written **only** inside `replaceChunks`. Nothing forces it to
 stay correct — nothing outside that transaction touches it.
 
-Cascade rules, and the one that matters most: **`deleteNotebook` never deletes
-publications or chunks.** They may be attached to another notebook, and a shared
-publication deleted here is data loss the user cannot undo.
+Cascade rules: **`deleteNotebook` deletes the notebook and every publication that
+exists only inside it** — a publication with no other notebook association — and
+returns those cascaded publications so the sync layer can tombstone them. A
+publication attached to any *other* notebook is shared: it survives, holding one
+fewer notebook, and stays searchable from the other notebook. (This revises the
+earlier association-only rule; see
+[`specs/1791055194089-delete-notebooks/spec.md`](../specs/1791055194089-delete-notebooks/spec.md).)
+`deletePublication` and the notebook cascade share one
+`_cascadePublication` implementation so the two cannot drift.
 
 ## Every `Query` is closed
 

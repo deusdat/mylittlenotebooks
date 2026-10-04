@@ -53,3 +53,7 @@ download/
 
 # Widget Preview related
 .widget_preview/
+
+# ObjectBox generated model (regenerate with `make codegen`)
+lib/objectbox.g.dart
+lib/objectbox-model.json

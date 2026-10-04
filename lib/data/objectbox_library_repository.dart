@@ -134,30 +134,43 @@ class ObjectBoxLibraryRepository implements LibraryRepository {
   void deletePublication(String publicationUuid) {
     final publication = _requirePublication(publicationUuid);
     _store.runInTransaction(TxMode.write, () {
-      final query = _chunks
-          .query(ObChunk_.publicationId.equals(publication.id))
-          .build();
-      try {
-        query.remove();
-      } finally {
-        query.close();
-      }
-
-      // The document text goes with it, or the store would grow without bound
-      // and a re-import under the same uuid could resurrect stale text.
-      final documents = _documents
-          .query(ObDocument_.publicationId.equals(publication.id))
-          .build();
-      try {
-        documents.remove();
-      } finally {
-        documents.close();
-      }
-
-      // Notebooks are deliberately untouched: each one simply holds one fewer
-      // publication (spec FR12, AC12).
-      _publications.remove(publication.id);
+      _cascadePublication(publication);
     });
+  }
+
+  /// Removes a publication and its children: chunks, document, then the row.
+  ///
+  /// **The one place this cascade exists.** `deletePublication` and the
+  /// notebook exclusive-cascade both call it, and the sync module routes its
+  /// local deletes through them, so the "delete a publication" operation cannot
+  /// drift into three copies.
+  ///
+  /// ObjectBox will not do this for us: dropping only the publication row
+  /// leaves its chunks behind with a zeroed `ToOne` and a live denormalised
+  /// `publicationId`, so they keep counting and keep matching scoped search, and
+  /// nothing throws (peer-sync FR17).
+  void _cascadePublication(ObPublication publication) {
+    final query = _chunks
+        .query(ObChunk_.publicationId.equals(publication.id))
+        .build();
+    try {
+      query.remove();
+    } finally {
+      query.close();
+    }
+
+    // The document text goes with it, or the store would grow without bound
+    // and a re-import under the same uuid could resurrect stale text.
+    final documents = _documents
+        .query(ObDocument_.publicationId.equals(publication.id))
+        .build();
+    try {
+      documents.remove();
+    } finally {
+      documents.close();
+    }
+
+    _publications.remove(publication.id);
   }
 
   @override
@@ -206,17 +219,31 @@ class ObjectBoxLibraryRepository implements LibraryRepository {
   }
 
   @override
-  void deleteNotebook(String notebookUuid) {
+  List<CascadedPublication> deleteNotebook(String notebookUuid) {
     final notebook = _requireNotebook(notebookUuid);
+    final cascaded = <CascadedPublication>[];
     _store.runInTransaction(TxMode.write, () {
-      // Association only. Publications and chunks are shared state and may be
-      // attached to other notebooks, so deleting them here would be
-      // unrecoverable data loss (spec FR12, AC13, plan R9).
-      //
-      // Removing the notebook removes its `ToMany` rows; nothing else is
-      // touched, so no explicit per-element removal is needed here.
+      // Copy the edges first: cascading a publication mutates the `ToMany` we
+      // would otherwise be iterating.
+      final attached = notebook.publications.toList();
+      for (final publication in attached) {
+        // Exclusive means this notebook is its only association. A publication
+        // with any other notebook is shared, and deleting it would be
+        // unrecoverable data loss the user did not ask for (spec FR1, FR3).
+        if (publication.notebooks.length > 1) continue;
+        // Captured before the row goes, for the caller's tombstone (spec FR5).
+        cascaded.add(CascadedPublication(
+          uuid: publication.uuid,
+          versionCounter: publication.versionCounter,
+        ));
+        _cascadePublication(publication);
+      }
+
+      // Removing the notebook removes its `ToMany` edges; shared publications
+      // are left holding one fewer notebook, exactly as before.
       _notebooks.remove(notebook.id);
     });
+    return cascaded;
   }
 
   ObPublication _requirePublication(String uuid) {

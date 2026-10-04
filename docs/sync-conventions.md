@@ -215,10 +215,24 @@ and the next push flips it back.
 ## Deletes
 
 A delete is a **record type, not a flag**. There is no `isDeleted` boolean and no
-tombstone field anywhere in a payload (FR13).
+tombstone field anywhere in a payload (FR13). A delete carries a uuid and a
+version and **no entity type** (FR15); the receiver resolves the uuid against the
+notebook box first, then the publication box.
 
 - The receive path runs the **full local cascade** — chunks, document,
   publication — in one transaction. ObjectBox will not do it; see site 7 above.
+- **A notebook delete cascade does not re-derive exclusivity on the receiver.**
+  The deleting device decides which publications are exclusive and emits a
+  separate `DeleteDto` for each one it cascaded; the receiver obeys those records
+  rather than recomputing them. Re-deriving would diverge permanently whenever
+  the two devices' edge sets differ: the sender's unconditional tombstone (FR14)
+  keeps the publication dead on one side while the receiver would keep it alive.
+  The cost — a divergent peer can over-delete — is the same accepted loss as D3.
+- **A publication edge naming a tombstoned notebook is dropped, not
+  materialised.** `UuidScope.resolveNotebook` creates the row it resolves, so an
+  edge list is filtered through the tombstone store before it is applied.
+  Otherwise a dead notebook returns as an untitled side-bar row — FR14 reached
+  through an edge instead of a record.
 - The **tombstone goes in the same transaction as the delete.** Written after a
   commit it could be lost, leaving a deleted object resurrectable by an in-flight
   push; written before, a rollback leaves a live object nothing can update. There
@@ -229,6 +243,21 @@ tombstone field anywhere in a payload (FR13).
 - The tombstone's version is what lets the delete be selected into a later delta.
   The local delete path stamps it; a tombstone stuck at counter 0 would never be
   pushed and the deletion would never reach the peer.
+
+### The notebook cascade, exclusive vs shared
+
+A notebook delete deletes the notebook **and every publication that exists only
+inside it**. A publication attached to any other notebook is **shared**: its edge
+to this notebook goes away with the notebook, but the publication, its document,
+and its chunks survive and stay reachable from the other notebook.
+
+That decision is made on the deleting device, once, at delete time, and is
+carried to peers as the delete records it produced (`SyncDeleter.deleteNotebookLocally`).
+The physical cascade lives in `ObjectBoxLibraryRepository._cascadePublication` —
+one implementation shared by `deletePublication` and the notebook cascade — while
+every tombstone and version write lives in `lib/data/sync/`. The tombstone and the
+cascade share one transaction, so a failure cannot leave a deleted object
+resurrectable or a live object that nothing can update.
 
 ## A tombstone beats any live record
 
@@ -303,6 +332,12 @@ create a row for it, and that row has an **empty title** — a notebook in the
 sidebar with no label, indistinguishable from a bug. It also makes the DAG honest:
 a notebook is a *root*, applied before anything that references it, rather than a
 row conjured into existence by a reference.
+
+A notebook is also a **delete root**. A notebook tombstone refuses a later
+`NotebookDto` (FR14), and the receive path removes the notebook row for a
+notebook `DeleteDto`. The exclusive publications it cascaded arrive as their own
+delete records, so the receiver needs no notion of exclusivity — see **Deletes**
+above.
 
 ## `ToMany.removeWhere`, not `remove`
 

@@ -16,6 +16,25 @@ class EmptySourceException implements Exception {
       'the file it came from is not guaranteed to stay readable (spec FR4).';
 }
 
+/// A publication that a notebook delete cascaded away.
+///
+/// Carries only row data captured **before** the row was removed: the uuid and
+/// the version the publication died at. The delete-notebook feature needs both
+/// to write a tombstone, and neither is a sync concept — a uuid is an entity
+/// identity and the counter is already a column on `ObPublication`.
+class CascadedPublication {
+  final String uuid;
+
+  /// The publication's `versionCounter` as it stood before the cascade. The
+  /// sync layer turns this into a death version with `nextVersion`.
+  final int versionCounter;
+
+  const CascadedPublication({
+    required this.uuid,
+    required this.versionCounter,
+  });
+}
+
 /// Write side of the library: creating publications, associating them with
 /// notebooks, and replacing chunk sets.
 ///
@@ -49,10 +68,17 @@ abstract interface class LibraryRepository {
   /// Detaches. Idempotent (spec FR11).
   void detach(String publicationUuid, String notebookUuid);
 
-  /// Removes a notebook's **associations only**.
+  /// Removes a notebook and every publication that exists **only** inside it.
   ///
-  /// Never deletes publications or chunks: they may be attached to other
-  /// notebooks, and a shared publication deleted here would be data loss the
-  /// user cannot undo (spec FR12, plan R9).
-  void deleteNotebook(String notebookUuid);
+  /// A publication attached to any other notebook is a **shared** publication
+  /// and is never deleted: its edge to this notebook goes away with the
+  /// notebook, but the publication, its document, and its chunks survive and
+  /// stay reachable from the other notebook (spec FR1, FR3).
+  ///
+  /// Exclusivity is resolved here, at delete time, from the notebook's own
+  /// edges — never cached (spec FR2). Returns the cascaded publications so the
+  /// caller can write tombstones. This **amends** the data-layer spec's FR12,
+  /// which previously deleted only the association; see the delete-notebook
+  /// spec's amendment record.
+  List<CascadedPublication> deleteNotebook(String notebookUuid);
 }

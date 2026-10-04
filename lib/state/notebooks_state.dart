@@ -9,7 +9,15 @@ class NotebooksState {
   final List<Notebook> notebooks;
   final Notebook Function() create;
 
-  const NotebooksState({required this.notebooks, required this.create});
+  /// Permanently deletes the notebook with [id], cascading its exclusive
+  /// publications (delete-notebook spec).
+  final void Function(String id) delete;
+
+  const NotebooksState({
+    required this.notebooks,
+    required this.create,
+    required this.delete,
+  });
 
   /// The notebook with this id, or `null` if it is not in the repository.
   Notebook? byId(String id) {

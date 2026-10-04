@@ -5,6 +5,7 @@ import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/data/objectbox_library_repository.dart';
 import 'package:mylittlenotebooks/data/sync/device_id.dart';
 import 'package:mylittlenotebooks/data/sync/sync_codec.dart';
+import 'package:mylittlenotebooks/data/sync/sync_deleter.dart';
 import 'package:mylittlenotebooks/data/sync/sync_payload.dart';
 import 'package:mylittlenotebooks/data/sync/sync_scope.dart';
 import 'package:mylittlenotebooks/data/sync/sync_tombstones.dart';
@@ -72,11 +73,17 @@ class SyncApplier {
   })  : _store = store,
         _deviceId = deviceId ?? resolveDeviceId(store),
         _tombstones = tombstones ?? TombstoneStore(store),
+        _deleter = SyncDeleter(
+          store: store,
+          deviceId: deviceId,
+          tombstones: tombstones,
+        ),
         _library = ObjectBoxLibraryRepository(store);
 
   final Store _store;
   final ObjectBoxLibraryRepository _library;
   final TombstoneStore _tombstones;
+  final SyncDeleter _deleter;
   final IngestFaultHook? faultHook;
 
   /// This device's `embeddingModelId`. **The gate compares against this and
@@ -280,7 +287,18 @@ class SyncApplier {
         // version wins: an omitted notebook is *detached*, not merely not
         // attached. Additive-only handling would make a detach permanently
         // invisible, since nothing else in the payload could report it.
-        _syncNotebookEdges(scope, publication, dto.notebookUuids);
+        //
+        // A tombstoned notebook is filtered out first (delete-notebook FR8):
+        // `UuidScope.resolveNotebook` *creates* the row it resolves, so passing
+        // a dead uuid here would resurrect a deleted notebook as an untitled
+        // row — the same failure FR14 exists to prevent, reached through an
+        // edge instead of a record. The filter runs before resolution, so no
+        // row is conjured.
+        _syncNotebookEdges(
+          scope,
+          publication,
+          dto.notebookUuids.where((u) => !_tombstones.isDead(u)).toList(),
+        );
 
         // Unconditional. An earlier version of this compared the notebook count
         // before and after and only wrote on a change — which silently dropped
@@ -325,35 +343,33 @@ class SyncApplier {
     });
   }
 
-  /// The **local** delete path: cascades and tombstones, stamping a version so
-  /// the delete can be selected into a later push (FR11).
+  /// The **local** publication delete path: cascades and tombstones, stamping a
+  /// version so the delete can be selected into a later push (FR11).
   ///
-  /// Without the version the delete would be stuck at counter zero and no delta
-  /// could ever carry it, so a user deletion on this device would never reach a
-  /// peer. The counter is the publication's own, incremented once: a delete is
-  /// the next edit to that record, and reusing its counter keeps one version
-  /// line per publication rather than two that have to be reconciled.
-  void deleteLocally(String publicationUuid) {
-    final publication = _findPublication(publicationUuid);
-    final version = nextVersion(
-      publication == null ? noVersion : _versionOf(publication.versionCounter),
-      _deviceId,
-    );
-
-    _store.runInTransaction(TxMode.write, () {
-      _cascade(publication);
-      _tombstones.markDead(publicationUuid, versionCounter: version.counter);
-    });
-  }
-
-  SyncVersion _versionOf(int counter) =>
-      (counter: counter, deviceId: _deviceId);
+  /// Delegates to [SyncDeleter] so there is exactly one local delete
+  /// implementation; the receive path below is the other caller of the same
+  /// data-layer cascade.
+  void deleteLocally(String publicationUuid) =>
+      _deleter.deletePublicationLocally(publicationUuid);
 
   void _applyDelete(DeleteDto delete) {
-    final publication = _findPublication(delete.uuid);
+    // A delete record carries **no entity type** (FR15). The uuid is globally
+    // unique, so it is resolved against both boxes here: notebook first, then
+    // publication. The deleting device decided exclusivity and expressed the
+    // result as separate delete records; the receiver obeys them rather than
+    // re-deriving (delete-notebook D2).
+    final notebook = _findNotebook(delete.uuid);
+    final publication = notebook == null ? _findPublication(delete.uuid) : null;
 
     _store.runInTransaction(TxMode.write, () {
-      _cascade(publication);
+      if (notebook != null) {
+        // The notebook row's `ToMany` edges vanish with it; shared publications
+        // are left holding one fewer notebook. Its exclusive publications arrive
+        // as their own delete records and take the publication branch below.
+        _notebooks.remove(notebook.id);
+      } else {
+        _cascade(publication);
+      }
 
       // The tombstone goes in **the same transaction** as the delete. Written
       // after a commit it could be lost, leaving a deleted object resurrectable

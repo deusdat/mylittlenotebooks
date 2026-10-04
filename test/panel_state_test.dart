@@ -88,4 +88,29 @@ void main() {
 
     expect(context.value.collapsedByUser, isTrue);
   });
+
+  group('narrow-window overlay (spec FR15)', () {
+    test('opens and closes without touching or writing intent', () {
+      build(preloaded: false);
+
+      context.value.openOverlay();
+      context.rebuild();
+      expect(context.value.overlayOpen, isTrue);
+      expect(context.value.collapsedByUser, isFalse);
+
+      context.value.closeOverlay();
+      context.rebuild();
+      expect(context.value.overlayOpen, isFalse);
+
+      expect(store.writeCount, 0, reason: 'the overlay is never persisted');
+    });
+
+    test('opening the overlay does not change the stored collapse', () {
+      build(preloaded: true); // user preference: collapsed
+      context.value.openOverlay();
+      context.rebuild();
+      expect(context.value.collapsedByUser, isTrue);
+      expect(store.writeCount, 0);
+    });
+  });
 }

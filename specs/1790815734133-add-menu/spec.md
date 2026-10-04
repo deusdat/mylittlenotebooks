@@ -2,7 +2,7 @@
 
 **Spec directory:** `1790815734133-add-menu`
 **Feature name:** `add-menu`
-**Revision:** 4 — streamlined. Removes drag-to-resize and the overlay drawer; reduces three presentation modes to two; collapses the persisted surface to a single boolean. See "Streamlining Record".
+**Revision:** 5 — a narrow window can now open the panel as a temporary overlay on explicit user intent. Revision 4 streamlined (removed drag-to-resize and the overlay drawer; two presentation modes; one persisted boolean). See the "Revision 5 Record" and the "Streamlining Record".
 
 ## Context
 
@@ -25,7 +25,7 @@ Today there is no shell at all: no navigation model, no way to move between a li
 ## Non-Goals
 
 - **No panel resizing.** The user cannot drag the panel wider or narrower. Panel width is derived from the window.
-- **No overlay / modal drawer menu.** The panel collapses to an icon rail on narrow windows; it does not become a floating menu.
+- **No persistent overlay on wide windows.** When the window is wide enough to dock the panel, it is docked; it never floats over the content. A floating overlay is used **only** on a narrow window, only while the user has explicitly opened it, and it dismisses on the first navigation (FR15).
 - **No source ingestion.** No file upload, URL capture, YouTube import, or document parsing.
 - **No AI features.** No chat panel, no question answering, no citations, no summarization, no audio or video overviews, mind maps, or reports.
 - **No notebook content.** The centre page inside a notebook renders a placeholder body.
@@ -36,10 +36,11 @@ Today there is no shell at all: no navigation model, no way to move between a li
 
 ## Definitions
 
-- **Rail** — the panel collapsed to a fixed 56 px strip of icons. Its only presentation on narrow windows.
+- **Rail** — the panel collapsed to a fixed 56 px strip of icons. Its persistent presentation on narrow windows.
 - **Panel** — the panel expanded to a derived width, showing icons with labels.
+- **Overlay panel** — the panel shown **over** the centre page on a narrow window, opened on demand (FR15). It is not docked, does not contribute to layout width, and is transient.
 - **Docking breakpoint** — the window width below which the panel is shown as a rail. Derived, not chosen independently: see FR6.
-- **User intent** — whether the user collapsed the panel. The single persisted value. It is never changed by the app acting on its own.
+- **User intent** — whether the user collapsed the panel. The single persisted value. It is never changed by the app acting on its own. Distinct from the transient overlay, which is not persisted.
 
 ---
 
@@ -60,9 +61,9 @@ Today there is no shell at all: no navigation model, no way to move between a li
 - **FR6 — Derived docking breakpoint.** The breakpoint is the window width below which a panel of the minimum sane width (180 px) would exceed 20%. It is therefore **derived from FR3 rather than chosen independently**: `breakpoint = 180 ÷ 0.20 = 900 px`.
 
   - **At or above 900 px**: intent selects the presentation — expanded is a **panel** at the FR3 width; collapsed is the **rail**.
-  - **Below 900 px**: the panel is a **rail**, regardless of intent. The expanded intent is remembered and takes effect again when the window widens. No overlay or modal menu is used.
-
-  Because FR3's width rule and FR6's breakpoint derive from the same two numbers, a panel can never violate the 20% proportion: below the breakpoint the panel is not rendered in expanded form at all.
+  - **Below 900 px**: the panel is a **rail** by default, regardless of intent. The expanded intent is remembered and takes effect again when the window widens. The user **can still open the panel on demand as a temporary overlay** (FR15).
+  
+  Because FR3's width rule and FR6's breakpoint derive from the same two numbers, a panel can never violate the 20% proportion: below the breakpoint the panel is not rendered in expanded form as part of the layout at all. The FR15 overlay is not part of the layout — it floats over the centre page — so the proportion still holds for the docked panel.
 
 - **FR7 — Add Notebook action.** The top of the panel contains a single **Add Notebook** button. Activating it creates a notebook, appends it to the end of the list, and opens it in the centre page. The new notebook is named automatically (`Notebook N`) and no naming dialog is shown. The button is reachable in both the panel and the rail.
 
@@ -79,6 +80,32 @@ Today there is no shell at all: no navigation model, no way to move between a li
 - **FR13 — Deep link and restart safety.** The open route is the single source of truth for what is open; no component keeps a parallel copy of the navigation level. **No navigation state is persisted.** Every launch starts at the notebook list, so there is no half-completed drill-down to restore. A route naming a notebook that is not in the repository redirects to the list.
 
 - **FR14 — Keyboard shortcuts.** Two shortcuts are bound at the shell and must not intercept keys consumed by a focused text field: `Cmd+B` (`Ctrl+B` on Windows) toggles collapse, and `Escape` navigates back.
+
+- **FR15 — A narrow window can open the panel as a temporary overlay.**
+  On a window below the docking breakpoint (FR6) the panel is a rail in the
+  layout, but activating **Expand panel** opens the full panel **over** the
+  centre page rather than being refused. This makes the collapse control do
+  something on every window width instead of appearing dead on a narrow one —
+  which is what a default-sized window (below 900 px) otherwise looks like.
+
+  The overlay:
+  - **Is transient and never persisted.** It is *not* the stored user intent
+    (FR2, FR5). Opening it leaves `collapsedByUser` untouched, so the wide-window
+    behaviour and the restored preference are unaffected.
+  - **Dismisses on any of:** tapping the scrim, `Escape`, the collapse control,
+    or activating any destination (which also performs its navigation). It never
+    lingers across a route change.
+  - **Never appears on a dockable window.** At or above the breakpoint the panel
+    is docked exactly as before; there is no overlay toggle and no scrim.
+  - **Reuses the panel widget verbatim** — the same destinations, the same
+    keyboard order, the same accessibility labels (NFR6) — so a destination
+    cannot be reachable in one presentation and not another.
+  - **Considers intent on open:** if the window *is* dockable, "Expand panel"
+    clears `collapsedByUser` (the docked panel expands in place); if it is not
+    dockable, "Expand panel" opens the overlay and leaves intent alone.
+
+  Because the overlay floats rather than docks, it does not consume layout width:
+  the centre page keeps its full share and FR3's 20% rule is untouched.
 
 ### Non-Functional Requirements
 
@@ -113,7 +140,7 @@ Single source of truth. Values must not be duplicated as literals anywhere in th
 - [ ] **AC1:** On first launch at a window width ≥ 900 px, the navigation panel is visible and expanded, with Add Notebook as the first element in it.
 - [ ] **AC2:** At a window width ≥ 900 px the panel width equals `clamp(180, 20% of window width, 320)` — exactly 20% between 900 and 1600 px, 180 px at 900, and 320 px at or above 1600. No interaction can produce any other width.
 - [ ] **AC3:** Narrowing the window from 1000 px to 700 px switches the panel to the rail; widening back past 900 px restores the panel at its FR3 width.
-- [ ] **AC4:** Narrowing the window never changes the stored intent, and never opens an overlay or modal menu.
+- [ ] **AC4:** Narrowing the window never changes the stored intent. In the docked case it opens no overlay; the FR15 narrow-window overlay is opened only by explicit user action.
 - [ ] **AC5:** The collapse control switches between panel and rail; expanding restores the FR3 width rather than any remembered value.
 - [ ] **AC6:** The rail exposes every destination with both a tooltip and a semantic label. The rail is 56 px and never exceeds the window width.
 - [ ] **AC7:** The centre page always receives the remaining width, never overflows or clips, and stays usable at every window width from 320 px upward.
@@ -130,6 +157,11 @@ Single source of truth. Values must not be duplicated as literals anywhere in th
 - [ ] **AC18:** Unit tests cover the width formula at and beyond both ends of its range, the derived breakpoint, the collapse decision across both sides of the breakpoint, persisted-state round-trip and corrupt-data recovery, and the list ↔ detail ↔ back transitions.
 - [ ] **AC19:** Every panel control is keyboard-reachable and exposes an accessible label.
 - [ ] **AC20:** The shell builds and runs on macOS, Windows, and Linux, obeying identical layout rules at identical window widths.
+- [ ] **AC21:** On a window below 900 px the panel is a rail, and activating **Expand panel** opens the full panel as an overlay over the centre page; the centre page width is unchanged by the overlay (it floats, it does not dock).
+- [ ] **AC22:** The overlay dismisses on scrim tap, `Escape`, the collapse control, and on activating any destination — and activating a destination also performs its navigation.
+- [ ] **AC23:** Opening the overlay never writes the persisted intent; after dismissing it and widening past 900 px, the docked panel's state matches the stored preference exactly as before.
+- [ ] **AC24:** On a window at or above 900 px there is no overlay and no scrim; **Expand panel** clears the stored collapse and expands the docked panel in place.
+- [ ] **AC25:** Every destination reachable in the docked panel is reachable in the overlay with the same keyboard order and accessibility labels.
 
 ---
 
@@ -152,7 +184,7 @@ Revision 4 was produced by removing two capabilities that revision 3 had carried
 
 | # | Question | Resolution |
 |---|---|---|
-| D1 | What happens when the window is too narrow for an expanded panel? | The panel is a rail. No overlay, no modal menu. |
+| D1 | What happens when the window is too narrow for an expanded panel? | The panel is a rail by default; **Expand panel** opens it as a temporary overlay (rev 5, FR15). |
 | D2 | Does the narrow-window fallback conflict with "never collapse on its own"? | No. Intent is never changed automatically; only presentation changes. |
 | D3 | Route push or in-panel state swap? | A real route push, so platform back works and the route is the single source of truth. |
 | D4 | What is a notebook's identity? | An opaque string id owned and generated by the repository. Durable storage is deferred. |
@@ -165,6 +197,36 @@ Revision 4 was produced by removing two capabilities that revision 3 had carried
 | D11 | Does the detail navigation need sub-items immediately? | A declarative registry; one section enabled, the rest disabled with tooltips. |
 | D12 | Is "collapsed" a boolean or a presentation? | A boolean, and it is the user's intent. Presentation is derived from it and the window width, and is never persisted. |
 | D13 | Should the user be able to size the panel? | No. See the Streamlining Record. Revisit if a later spec needs per-project panel sizes. |
+| D14 | Is the narrow-window overlay persisted? | No. It is transient presentation, opened on demand, dismissed on first navigation. The persisted surface is still the single collapse boolean (FR5). |
+
+---
+
+## Revision 5 Record — the narrow-window overlay returns
+
+Revision 4 removed the overlay drawer (its D1 read "the panel is a rail; no
+overlay"). That reading turns out to make the collapse control look **broken** on
+a default-sized window: the macOS window opens at **800×600**, which is below the
+900 px breakpoint, so the panel is a forced rail and **Expand panel** does
+nothing — the user sees a control that can never succeed until they widen the
+window by hand.
+
+Revision 5 restores an overlay, but **narrowly**: it is the *only* way to expand
+on a sub-breakpoint window, it floats over the centre page rather than docking, it
+is never persisted, and it dismisses on the first navigation. The docked
+behaviour at or above the breakpoint is unchanged, and revision 4's other removal
+(panel resizing) stands.
+
+### Why this does not reintroduce the old cost
+
+The reason revision 4 could remove the overlay was that a single width rule no
+longer contradicts itself, so the overlay was not needed to escape a
+mode conflict. That is still true — the overlay here is not a third *presentation*
+of the docked panel and does not participate in width resolution at all. It is a
+transient surface that reuses the panel widget verbatim, so the geometry model,
+the persisted surface, and the 20% invariant are untouched. The cost that returns
+is only the one revision 4 named as inherent to an overlay — a scrim and an
+`Escape`-dismiss path — and that cost is accepted here because the alternative is
+a control that appears dead on the app's default window.
 
 ## Open Questions
 

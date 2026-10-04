@@ -193,5 +193,28 @@ void main() {
             'Offenders: $offenders',
       );
     });
+
+    test('AC18: no UI file imports the sync module (delete-notebook NFR1)', () {
+      // The UI reaches a notebook delete through the repository, never through
+      // lib/data/sync/. A widget that imported `SyncDeleter` would be expressing
+      // an opinion about synchronization, which the domain/UI boundary forbids.
+      final syncImports = <String, List<String>>{};
+      for (final dir in ['lib/shell', 'lib/pages']) {
+        for (final file in Directory(dir).listSync(recursive: true).whereType<File>()) {
+          if (!file.path.endsWith('.dart')) continue;
+          final hits = importedPackages(file)
+              .where((i) => i.contains('/data/sync/'))
+              .toList();
+          if (hits.isNotEmpty) syncImports[file.path] = hits;
+        }
+      }
+      expect(
+        syncImports,
+        isEmpty,
+        reason: 'UI must reach sync-aware operations through the repository, '
+            'not by importing lib/data/sync/ (delete-notebook NFR1, AC18). '
+            'Offenders: $syncImports',
+      );
+    });
   });
 }

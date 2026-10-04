@@ -14,6 +14,15 @@ abstract interface class NotebookRepository {
   Notebook create();
 
   bool exists(String id);
+
+  /// Permanently deletes the notebook with [id].
+  ///
+  /// The notebook's **exclusive** publications are deleted with it; a
+  /// publication also attached to another notebook survives. Every deleted uuid
+  /// is tombstoned so the deletion travels and cannot be resurrected
+  /// (delete-notebook FR1, FR5, FR11). Deleting a id that is not present is a
+  /// no-op.
+  void delete(String id);
 }
 
 /// Seeded in-memory store.
@@ -42,6 +51,9 @@ class InMemoryNotebookRepository implements NotebookRepository {
 
   @override
   bool exists(String id) => _notebooks.any((notebook) => notebook.id == id);
+
+  @override
+  void delete(String id) => _notebooks.removeWhere((notebook) => notebook.id == id);
 }
 
 /// Builds the repository and returns it alongside its current contents so the

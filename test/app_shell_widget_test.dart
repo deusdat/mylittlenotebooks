@@ -158,6 +158,65 @@ void main() {
     });
   });
 
+  group('narrow-window overlay (FR15, AC21-AC25)', () {
+    testWidgets('Expand panel on a narrow window opens the overlay', (
+      tester,
+    ) async {
+      await pumpAtSize(tester, 700, 800);
+
+      // One NavPanel in the layout (the rail).
+      expect(find.byType(NavPanel), findsOneWidget);
+      await tester.tap(tileWithLabel('Expand panel'));
+      await tester.pumpAndSettle();
+
+      // A second NavPanel is now the overlay, and it renders text labels (only
+      // the expanded form does; the rail is icon-only).
+      expect(find.byType(NavPanel), findsNWidgets(2));
+      expect(find.text('Add Notebook'), findsOneWidget);
+    });
+
+    testWidgets('Escape dismisses the overlay without navigating back', (
+      tester,
+    ) async {
+      await pumpAtSize(tester, 700, 800);
+      await tester.tap(tileWithLabel('Expand panel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NavPanel), findsNWidgets(2));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(NavPanel), findsOneWidget);
+    });
+
+    testWidgets('choosing a destination closes the overlay and navigates', (
+      tester,
+    ) async {
+      await pumpAtSize(tester, 700, 800);
+      await tester.tap(tileWithLabel('Expand panel'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(tileWithLabel('Notebook 2').first);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(NavPanel), findsOneWidget);
+      expect(find.text('Notebook 2'), findsWidgets);
+    });
+
+    testWidgets('a dockable window never shows the overlay', (tester) async {
+      await pumpAtSize(tester, 1200, 800);
+      // The panel is already expanded and docked; collapsing shows the rail,
+      // and there is only ever one NavPanel.
+      await tester.tap(tileWithLabel('Collapse panel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NavPanel), findsOneWidget);
+      // Expanding again docks it in place, still one panel.
+      await tester.tap(tileWithLabel('Expand panel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NavPanel), findsOneWidget);
+    });
+  });
+
   group('accessibility (AC6, AC19)', () {
     testWidgets('the rail exposes every destination with a semantic label', (
       tester,

@@ -18,5 +18,14 @@ NotebooksState useNotebooksState({
     return notebook;
   }
 
-  return NotebooksState(notebooks: notebooks.value, create: create);
+  void delete(String id) {
+    repo.delete(id);
+    notebooks.value = repo.list();
+  }
+
+  return NotebooksState(
+    notebooks: notebooks.value,
+    create: create,
+    delete: delete,
+  );
 }

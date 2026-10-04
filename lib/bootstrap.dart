@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:mylittlenotebooks/data/first_run_seeder.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/objectbox/objectbox_store.dart';
 import 'package:mylittlenotebooks/data/objectbox_notebook_repository.dart';
@@ -59,10 +60,11 @@ Future<BootstrapResult> bootstrapDependencies({
     initial = notebooks.list();
   } else {
     // Opened exactly once, before the first frame.
-    final repo = ObjectBoxNotebookRepository(await openLibraryStore());
-    for (final _ in seedTitles) {
-      repo.create();
-    }
+    final libraryStore = await openLibraryStore();
+    final repo = ObjectBoxNotebookRepository(libraryStore);
+    // Exactly once per install, recorded in the store itself — not "if empty",
+    // which would re-seed after a delete-all (shell spec D10).
+    FirstRunSeeder(libraryStore).seedOnce(repo);
     resolvedNotebooks = repo;
     initial = repo.list();
   }
@@ -81,7 +83,3 @@ Future<BootstrapResult> bootstrapDependencies({
   _cached = result;
   return result;
 }
-
-/// The seeded notebook titles, preserved verbatim from the shell spec (D10) so
-/// a fresh launch looks the same as it did before the store became durable.
-const seedTitles = ['Notebook 1', 'Notebook 2', 'Notebook 3'];

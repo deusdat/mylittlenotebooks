@@ -23,6 +23,14 @@ String resolveDeviceId(Store store) {
   try {
     final found = existing.findFirst();
     if (found != null && found.value.isNotEmpty) return found.value;
+    if (found != null) {
+      // The row exists (the first-run seeder writes it before any sync), but has
+      // no device id yet. Preserve every other field — losing `seeded` here
+      // would re-arm the first-run seed on the next launch.
+      found.value = _mintDeviceId();
+      box.put(found);
+      return found.value;
+    }
   } finally {
     existing.close();
   }

@@ -1,6 +1,7 @@
 import 'package:mylittlenotebooks/data/identity.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
+import 'package:mylittlenotebooks/data/sync/sync_deleter.dart';
 import 'package:mylittlenotebooks/domain_mapping.dart';
 import 'package:mylittlenotebooks/models/notebook.dart';
 import 'package:mylittlenotebooks/objectbox.g.dart';
@@ -15,10 +16,21 @@ import 'package:mylittlenotebooks/objectbox.g.dart';
 /// Notebook ordering is creation order, oldest first, unchanged from the shell
 /// spec (FR8, D5).
 class ObjectBoxNotebookRepository implements NotebookRepository {
-  ObjectBoxNotebookRepository(this._store) : _box = _store.box<ObNotebook>();
+  ObjectBoxNotebookRepository(this._store, {SyncDeleter? deleter})
+      : _box = _store.box<ObNotebook>(),
+        _deleter = deleter ?? SyncDeleter(store: _store);
 
   final Store _store;
   final Box<ObNotebook> _box;
+
+  /// The single notebook-delete entry point.
+  ///
+  /// A notebook delete must tombstone the notebook **and** every publication it
+  /// cascades, in the same transaction (delete-notebook FR11), so the physical
+  /// removal and the tombstone writes are not reachable apart. Delegating to
+  /// [SyncDeleter] is what keeps that true; this repository does not delete a
+  /// notebook itself.
+  final SyncDeleter _deleter;
 
   /// The store is exposed so sibling repositories share one connection rather
   /// than each holding their own; ObjectBox permits exactly one open store per
@@ -78,6 +90,9 @@ class ObjectBoxNotebookRepository implements NotebookRepository {
       query.close();
     }
   }
+
+  @override
+  void delete(String id) => _deleter.deleteNotebookLocally(id);
 
   /// The entity behind a domain value, for repositories that need to mutate the
   /// association rather than read it.

@@ -27,6 +27,32 @@ When you say `specify <description>`, the agent MUST:
 
 All subsequent commands (`plan`, `break down`, `implement`) require the **full directory name** — `<timestamp>-<kebab-name>` — as the argument. Resolve a bare kebab-case name to its unique matching directory under `specs/`; if more than one match exists, ask which one.
 
+## Always Ask Clarifying Questions
+
+**At every phase, the agent MUST ask clarifying questions before finalizing an
+artifact — even when the request seems clear and even when the user does not ask
+for questions.** Use the question tool. This is not optional and does not expire.
+
+- **Specify** — ask before writing `spec.md`. Resolve every ambiguity that would
+  change a requirement, a schema, a scope boundary, or a dependency. Record each
+  answer as a decision or fold it into the requirements.
+- **Plan** — ask before writing `plan.md`. Resolve every implementation choice
+  with more than one defensible option.
+- **Break down** — ask before writing `tasks.md` if any task boundary, ordering,
+  or verification approach is ambiguous.
+- **Implement** — ask before making a change whose intent is unclear, before any
+  irreversible or destructive action, and before picking between approaches.
+
+Rules:
+1. Ask about **decisions**, not trivia. A question that will change the artifact
+   is required; a question the codebase already answers is not — check first.
+2. Never silently assume a default for a choice that affects behavior, scope, or
+   data. Offer options and mark a recommended one.
+3. Keep the artifact's **Open Questions** section as the durable record of what
+   is still genuinely undecided, and move resolved items into Resolved Decisions.
+4. If a later answer changes an earlier decision, update the artifact at the
+   source and regenerate downstream artifacts per the escalation rule below.
+
 ## Phase Flow & Error Escalation
 
 ```

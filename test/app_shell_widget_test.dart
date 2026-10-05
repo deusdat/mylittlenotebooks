@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:mylittlenotebooks/shell/form_factor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,6 +13,7 @@ import 'package:mylittlenotebooks/pages/notebook_detail_page.dart';
 import 'package:mylittlenotebooks/pages/notebooks_home_page.dart';
 import 'package:mylittlenotebooks/shell/nav_panel.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
+import 'test_note_env.dart';
 
 /// Shared harness for the widget-level suites.
 Widget buildTestApp({bool preloadedCollapsed = false}) {
@@ -23,6 +25,7 @@ Widget buildTestApp({bool preloadedCollapsed = false}) {
     initialNotebooks: seeded.notebooks,
     aiConfigs: InMemoryAiConfigRepository(),
     initialAiConfigs: const [],
+    noteEnv: testNoteEnvironment(),
   );
 }
 
@@ -50,6 +53,11 @@ Finder tileWithLabel(String label) => find.byWidgetPredicate(
 );
 
 void main() {
+  // The shell docks on desktop and overlays on mobile. Most tests exercise the
+  // desktop path; the overlay group overrides to a mobile platform.
+  setUp(() => formFactorOverride = TargetPlatform.macOS);
+  tearDown(() => formFactorOverride = null);
+
   group('panel width (AC2)', () {
     testWidgets('is 20% of the window between 900 and 1600', (tester) async {
       await pumpAtSize(tester, 1200, 800);
@@ -100,10 +108,14 @@ void main() {
     });
   });
 
-  group('narrow windows (AC3, AC7)', () {
-    testWidgets('below 900 the panel is a 56 px rail', (tester) async {
+  group('narrow desktop windows (AC3, AC7)', () {
+    testWidgets('below 900 the panel narrows, it does not collapse to a rail', (
+      tester,
+    ) async {
       await pumpAtSize(tester, 700, 800);
-      expect(panelWidth(tester), moreOrLessEquals(PanelGeometry.railWidth));
+      // Desktop docks whatever the width; it shrinks rather than collapsing.
+      expect(panelWidth(tester), moreOrLessEquals(180));
+      expect(panelWidth(tester), greaterThan(PanelGeometry.railWidth));
     });
 
     testWidgets('narrowing does not open any overlay or modal', (
@@ -114,7 +126,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(NavPanel), findsOneWidget);
-      expect(panelWidth(tester), moreOrLessEquals(56));
+      expect(panelWidth(tester), greaterThan(PanelGeometry.railWidth));
       // A modal route would put a second Scaffold/dialog in the tree.
       expect(find.byType(AlertDialog), findsNothing);
       expect(find.byType(Drawer), findsNothing);
@@ -128,6 +140,19 @@ void main() {
         expect(tester.takeException(), isNull, reason: 'overflow at $width px');
         expect(panelWidth(tester), lessThan(width));
       }
+    });
+
+    testWidgets('a dockable window never shows the overlay', (tester) async {
+      await pumpAtSize(tester, 1200, 800);
+      // The panel is already expanded and docked; collapsing shows the rail,
+      // and there is only ever one NavPanel.
+      await tester.tap(tileWithLabel('Collapse panel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NavPanel), findsOneWidget);
+      // Expanding again docks it in place, still one panel.
+      await tester.tap(tileWithLabel('Expand panel'));
+      await tester.pumpAndSettle();
+      expect(find.byType(NavPanel), findsOneWidget);
     });
   });
 
@@ -161,10 +186,12 @@ void main() {
     });
   });
 
-  group('narrow-window overlay (FR15, AC21-AC25)', () {
-    testWidgets('Expand panel on a narrow window opens the overlay', (
-      tester,
-    ) async {
+  group('mobile overlay (FR15, AC21-AC25)', () {
+    // Mobile is the only form factor that overlays.
+    setUp(() => formFactorOverride = TargetPlatform.android);
+    tearDown(() => formFactorOverride = TargetPlatform.macOS);
+
+    testWidgets('Expand panel opens the overlay', (tester) async {
       await pumpAtSize(tester, 700, 800);
 
       // One NavPanel in the layout (the rail).
@@ -205,22 +232,13 @@ void main() {
       expect(find.byType(NavPanel), findsOneWidget);
       expect(find.text('Notebook 2'), findsWidgets);
     });
-
-    testWidgets('a dockable window never shows the overlay', (tester) async {
-      await pumpAtSize(tester, 1200, 800);
-      // The panel is already expanded and docked; collapsing shows the rail,
-      // and there is only ever one NavPanel.
-      await tester.tap(tileWithLabel('Collapse panel'));
-      await tester.pumpAndSettle();
-      expect(find.byType(NavPanel), findsOneWidget);
-      // Expanding again docks it in place, still one panel.
-      await tester.tap(tileWithLabel('Expand panel'));
-      await tester.pumpAndSettle();
-      expect(find.byType(NavPanel), findsOneWidget);
-    });
   });
 
   group('accessibility (AC6, AC19)', () {
+    // Rail affordances (tooltips, icon-only tiles) are the mobile form.
+    setUp(() => formFactorOverride = TargetPlatform.android);
+    tearDown(() => formFactorOverride = TargetPlatform.macOS);
+
     testWidgets('the rail exposes every destination with a semantic label', (
       tester,
     ) async {
@@ -282,6 +300,7 @@ void main() {
         initialNotebooks: seeded.notebooks,
         aiConfigs: InMemoryAiConfigRepository(),
         initialAiConfigs: const [],
+      noteEnv: testNoteEnvironment(),
       ));
       await tester.pumpAndSettle();
       return seeded.notebooks;

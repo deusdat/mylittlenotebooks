@@ -1,3 +1,4 @@
+import 'package:mylittlenotebooks/shell/form_factor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,7 @@ import 'package:mylittlenotebooks/models/nav_level.dart';
 import 'package:mylittlenotebooks/models/notebook_section.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
 import 'package:mylittlenotebooks/shell/nav_panel.dart';
+import 'test_note_env.dart';
 
 ({App app, NotebookRepository repo}) buildTestApp({
   bool collapsed = false,
@@ -27,6 +29,7 @@ import 'package:mylittlenotebooks/shell/nav_panel.dart';
       initialNotebooks: repository.list(),
       aiConfigs: InMemoryAiConfigRepository(),
       initialAiConfigs: const [],
+      noteEnv: testNoteEnvironment(),
     ),
     repo: repository,
   );
@@ -55,6 +58,11 @@ Future<void> pumpAt(WidgetTester tester, double width) async {
 }
 
 void main() {
+  // Desktop (docked panel) is the default under test; narrower widths are
+  // covered explicitly in app_shell_widget_test.
+  setUp(() => formFactorOverride = TargetPlatform.macOS);
+  tearDown(() => formFactorOverride = null);
+
   group('navLevelFrom — pure, no router required', () {
     test('reads the detail level off a notebook path', () {
       expect(navLevelFrom(Uri.parse('/')), const NavLevelList());
@@ -111,7 +119,7 @@ void main() {
       expect(find.text('Notebook 1'), findsWidgets);
     });
 
-    testWidgets('exactly one section is enabled today', (tester) async {
+    testWidgets('Overview and Notes are the enabled sections', (tester) async {
       await pumpAt(tester, 1200);
       await tester.pumpWidget(buildTestApp().app);
       await tester.pumpAndSettle();
@@ -122,8 +130,12 @@ void main() {
           .widgetList<NavDestinationTile>(find.byType(NavDestinationTile))
           .where((tile) => notebookSections.any((s) => s.label == tile.label))
           .toList();
-      expect(tiles.where((tile) => tile.enabled).length, 1);
-      expect(tiles.firstWhere((tile) => tile.enabled).label, 'Overview');
+      final enabled = tiles.where((tile) => tile.enabled).map((t) => t.label);
+      expect(enabled, containsAll(<String>['Overview', 'Notes']));
+      // Notes became enabled with the add-notes feature; chat and studio remain
+      // disabled.
+      expect(enabled, isNot(contains('Chat')));
+      expect(enabled, isNot(contains('Studio')));
     });
 
     testWidgets('back restores the list and Add Notebook', (tester) async {

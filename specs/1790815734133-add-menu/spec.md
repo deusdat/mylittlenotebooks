@@ -237,3 +237,31 @@ Only questions that genuinely cannot be settled without a later spec or an exter
 - **What the centre page shows inside a notebook.** Placeholder for now. The eventual layout (sources, notes, chat) determines whether the FR10 registry needs more sections.
 - **Whether a 56 px rail is right on phones.** A phone may be better served by a zero-width panel plus a hamburger control in the centre page. This is a mobile-only refinement and does not affect the width formula.
 - **Mobile platform verification.** macOS, Windows, and Linux are in scope; Android and iOS builds are not verified by this spec.
+
+---
+
+## Amendment — form factor decides dock vs overlay (add-notes)
+
+Found while adding notes: the width-derived **dock breakpoint (900 px)** meant
+the app's default macOS window (800×600, set in `MainFlutterWindow`/`MainMenu.xib`)
+never docked the panel. "Expand" opened the transient overlay, which the shell
+closes on any navigation (FR15) — so the panel appeared to collapse every time
+the user opened a notebook or the Notes section.
+
+**Correction (applied at the source, and in `docs/shell-conventions.md`):**
+
+- **Dock-vs-overlay is decided by form factor, not window width.**
+  `lib/shell/form_factor.dart` maps `defaultTargetPlatform` to desktop
+  (`macOS`/`windows`/`linux` → dock) or mobile (`android`/`iOS`/`fuchsia` →
+  rail + overlay). This is a build-target decision.
+- **`PanelGeometry` no longer models the overlay.** `isCollapsed` is the user's
+  preference alone; `expandedWidthFor` is clamped to
+  `minExpandedWidth..maxExpandedWidth` and capped so the centre page keeps at
+  least `minContentWidth`. A narrow desktop window **narrows** the panel instead
+  of collapsing it. The retired `dockBreakpoint`/`isDockable` are gone.
+- **FR3's 20% target and the ≤320 px clamp still hold** where the window can
+  afford them; the new `minContentWidth` cap governs below that.
+
+This changes no goal: the panel still collapses to a rail on intent, and never
+floats over content on desktop. It only moves the *overlay* to the mobile form
+and stops window width from forcing a rail.

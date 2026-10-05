@@ -1,5 +1,8 @@
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_chunk.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/objectbox.g.dart';
@@ -21,6 +24,13 @@ import 'package:mylittlenotebooks/objectbox.g.dart';
 /// | 5 | `ObNotebook` | `publications` | ToMany |
 /// | 6 | `ObPublication` | `document` | ToOne |
 /// | 7 | `ObPublication` | `chunks` | ToMany |
+/// | 8 | `ObNote` | `notebooks` | ToMany (`@Backlink('notes')`) |
+/// | 9 | `ObNoteChunk` | `noteId` | denormalized int column |
+/// | 10 | `ObNoteChunk` | `note` | ToOne (`@TargetIdProperty('noteRef')`) |
+/// | 11 | `ObNoteDocument` | `noteId` | denormalized int column |
+/// | 12 | `ObNoteDocument` | `note` | ToOne (`@TargetIdProperty('noteOwnerId')`) |
+/// | 13 | `ObNote` | `document` | ToOne |
+/// | 14 | `ObNote` | `chunks` | ToMany (`@Backlink('note')`) |
 ///
 /// **This list is enumerated deliberately, not discovered reflectively.** A
 /// reflective implementation passes its tests while a site is silently missed,
@@ -37,12 +47,18 @@ class UuidScope {
       : _notebooks = store.box<ObNotebook>(),
         _publications = store.box<ObPublication>(),
         _documents = store.box<ObDocument>(),
-        _chunks = store.box<ObChunk>();
+        _chunks = store.box<ObChunk>(),
+        _notes = store.box<ObNote>(),
+        _noteDocuments = store.box<ObNoteDocument>(),
+        _noteChunks = store.box<ObNoteChunk>();
 
   final Box<ObNotebook> _notebooks;
   final Box<ObPublication> _publications;
   final Box<ObDocument> _documents;
   final Box<ObChunk> _chunks;
+  final Box<ObNote> _notes;
+  final Box<ObNoteDocument> _noteDocuments;
+  final Box<ObNoteChunk> _noteChunks;
 
   /// Every uuid seen this ingest, mapped to its local int. Retained so a payload
   /// referring to the same publication from both a chunk and the document row
@@ -181,5 +197,105 @@ class UuidScope {
 
     publication.chunks.add(_chunks.get(chunkId)!);
     _publications.put(publication);
+  }
+
+  // --- 8: a note's notebook edges (spec FR21) -------------------------------
+
+  /// Site 8 — local int for a note uuid, creating the row if unknown.
+  int resolveNote(String uuid) {
+    final cached = _resolved['note:$uuid'];
+    if (cached != null) return cached;
+
+    final existing =
+        _notes.query(ObNote_.uuid.equals(uuid)).build().findFirst();
+    if (existing != null) {
+      _resolved['note:$uuid'] = existing.id;
+      return existing.id;
+    }
+
+    final now = DateTime.fromMillisecondsSinceEpoch(
+      DateTime.now().toUtc().millisecondsSinceEpoch,
+      isUtc: true,
+    );
+    final created = ObNote(
+      uuid: uuid,
+      title: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _notes.put(created);
+    _resolved['note:$uuid'] = created.id;
+    return created.id;
+  }
+
+  /// Site 8 — attaches [noteId] to [notebookId].
+  void attachNoteToNotebook({
+    required int notebookId,
+    required int noteId,
+  }) {
+    final notebook = _notebooks.get(notebookId);
+    if (notebook == null) throw StateError('no notebook with id $notebookId');
+
+    if (notebook.notes.any((n) => n.id == noteId)) return;
+
+    notebook.notes.add(_notes.get(noteId)!);
+    _notebooks.put(notebook);
+  }
+
+  // --- 9 and 10: the note a chunk points at ---------------------------------
+
+  // --- 11 and 12: the note a document points at -----------------------------
+
+  /// Sites 11 and 12 — local int for a note body uuid, creating the row if
+  /// unknown, and keeping the denormalized column in step with the relation.
+  int resolveNoteDocument(String uuid, int noteId) {
+    final existing = _noteDocuments
+        .query(ObNoteDocument_.uuid.equals(uuid))
+        .build()
+        .findFirst();
+    if (existing != null) {
+      existing.noteId = noteId;
+      existing.note.targetId = noteId;
+      _noteDocuments.put(existing);
+      return existing.id;
+    }
+
+    final created = ObNoteDocument(
+      uuid: uuid,
+      noteId: noteId,
+      markdown: '',
+    );
+    created.note.targetId = noteId;
+    _noteDocuments.put(created);
+    return created.id;
+  }
+
+  // --- 13 and 14: the note's own outbound edges -----------------------------
+
+  /// Site 13 — points [noteId]'s document at [documentId].
+  void attachNoteDocument({
+    required int noteId,
+    required int documentId,
+  }) {
+    final note = _notes.get(noteId);
+    if (note == null) throw StateError('no note with id $noteId');
+    final document = _noteDocuments.get(documentId);
+    if (document == null) throw StateError('no note document with id $documentId');
+
+    note.document.targetId = documentId;
+    _notes.put(note);
+  }
+
+  /// Site 14 — attaches a chunk to its note's `chunks` ToMany.
+  void attachNoteChunk({
+    required int noteId,
+    required int chunkId,
+  }) {
+    final note = _notes.get(noteId);
+    if (note == null) throw StateError('no note with id $noteId');
+    if (note.chunks.any((c) => c.id == chunkId)) return;
+
+    note.chunks.add(_noteChunks.get(chunkId)!);
+    _notes.put(note);
   }
 }

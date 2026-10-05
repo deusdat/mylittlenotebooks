@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mylittlenotebooks/data/note_environment.dart';
 import 'package:mylittlenotebooks/models/nav_level.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
 import 'package:mylittlenotebooks/shell/nav_panel_body.dart';
@@ -12,6 +13,7 @@ class NavPanel extends StatelessWidget {
   final double width;
   final bool collapsed;
   final NavLevel navLevel;
+  final NoteEnvironment noteEnv;
   final VoidCallback onToggleCollapsed;
 
   const NavPanel({
@@ -19,6 +21,7 @@ class NavPanel extends StatelessWidget {
     required this.width,
     required this.collapsed,
     required this.navLevel,
+    required this.noteEnv,
     required this.onToggleCollapsed,
   });
 
@@ -39,6 +42,7 @@ class NavPanel extends StatelessWidget {
       child: _PanelColumn(
         collapsed: collapsed,
         navLevel: navLevel,
+        noteEnv: noteEnv,
         onToggleCollapsed: onToggleCollapsed,
       ),
     );
@@ -48,11 +52,13 @@ class NavPanel extends StatelessWidget {
 class _PanelColumn extends StatelessWidget {
   final bool collapsed;
   final NavLevel navLevel;
+  final NoteEnvironment noteEnv;
   final VoidCallback onToggleCollapsed;
 
   const _PanelColumn({
     required this.collapsed,
     required this.navLevel,
+    required this.noteEnv,
     required this.onToggleCollapsed,
   });
 
@@ -74,7 +80,11 @@ class _PanelColumn extends StatelessWidget {
           ),
           Divider(height: 1, color: theme.colorScheme.outlineVariant),
           Expanded(
-            child: NavPanelBody(collapsed: collapsed, navLevel: navLevel),
+            child: NavPanelBody(
+              collapsed: collapsed,
+              navLevel: navLevel,
+              noteEnv: noteEnv,
+            ),
           ),
         ],
       ),

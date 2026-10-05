@@ -44,6 +44,7 @@ const notebookSections = <NotebookSection>[
     id: 'notes',
     label: 'Notes',
     icon: Icons.sticky_note_2_outlined,
+    enabled: true,
   ),
   NotebookSection(
     id: 'chat',

@@ -22,32 +22,33 @@ lib/shell/
 This split is the single most important idea here, and it is what removed a
 contradiction that could not otherwise be resolved.
 
-- **Intent** — whether the user collapsed the panel. One boolean. The only
+> **Amended (add-notes).** Dock-vs-overlay is now decided by **form factor**
+> (`lib/shell/form_factor.dart`), not by window width. The width-derived dock
+> breakpoint described here is **retired**; a narrow desktop window narrows the
+> panel rather than collapsing it, and the overlay is the mobile form only.
+
+- **Intent** — whether the user collapsed the docked panel. One boolean. The only
   persisted value. Never changed by the app acting on its own.
-- **Presentation** — docked panel or rail. Derived every layout pass from the
-  window width and the intent. Never stored.
+- **Form factor** — desktop or mobile, read from `defaultTargetPlatform` (with a
+  `formFactorOverride` test seam). Desktop **docks**; mobile shows a rail plus a
+  transient **overlay**. A build-target decision, not a window-size one.
+- **Presentation** — rail or expanded, derived from intent. Window width only
+  sets *how wide* the expanded panel is; it never collapses it.
 
 ```dart
-PanelGeometry.isCollapsed(windowWidth: w, collapsedByUser: c)
+PanelGeometry.isCollapsed(collapsedByUser: c)          // intent alone
 PanelGeometry.widthFor(windowWidth: w, collapsedByUser: c)
 ```
 
 There is no mode enum and no presentation table, because **a single rule cannot
 contradict itself**. Revision 1 of the spec stated two unconditional rules — "at
 most 20% of the window" and "at least 180 px" — which cannot both hold below
-900 px. That collision forced a three-mode presentation system, which in turn
-forced an overlay drawer to escape it. Removing drag-to-resize removed the
-collision, and both fall away.
-
-The breakpoint is **derived, never chosen**:
-
-```dart
-static double get dockBreakpoint => minExpandedWidth / maxWidthFraction; // 900
-```
-
-Never write `900` as a literal. Tuning either constant moves the breakpoint and
-every threshold with it; `panel_geometry_test.dart` asserts both the value and
-the invariant behind it (`0.20 × w ≥ 180` for every dockable `w`).
+900 px. The original fix was a width-derived breakpoint; that is now gone,
+because it made the app's default 800 px window show a transient overlay that
+closed on every navigation. Form factor replaces it: the expanded width is
+clamped to `minExpandedWidth..maxExpandedWidth` **and** capped so the centre page
+keeps at least `minContentWidth`, so a narrow desktop panel shrinks instead of
+disappearing. `panel_geometry_test.dart` asserts the cap.
 
 ## Measuring: where window width comes from
 
@@ -165,10 +166,8 @@ which would leave nothing to pop back to.
 - **Panel sizing by the user.** Removed in spec revision 4. Re-opening it means
   re-introducing the width/breakpoint conflict and the presentation-mode system
   that the removal deleted.
-- **An overlay / modal drawer menu.** The rail is the narrow-window form.
 - **Durable notebook data.** In-memory only; a relaunch returning to the three
   seeds is expected, not data loss.
-- **Mobile platform builds.** Android and iOS are not verified by this spec.
-  Whether a 56 px rail is right on a phone, or whether it should be a
-  zero-width panel plus a hamburger, is an open question for a mobile spec and
-  does not affect the width formula.
+- **Mobile polish.** Android and iOS now get the rail + overlay form
+  (`isDesktopFormFactor` false), but a phone-specific layout (hamburger,
+  edge-swipe) is not specified.

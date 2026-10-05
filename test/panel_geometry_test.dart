@@ -1,20 +1,15 @@
 import 'package:mylittlenotebooks/models/panel_geometry.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// Pure geometry tests. No widget binding, no `HookContext`, no Flutter
-/// imports anywhere in this file — if one is ever needed, a framework
-/// dependency has leaked into the panel model (spec NFR5).
+/// Pure geometry tests. No widget binding, no `HookContext`, no Flutter imports
+/// anywhere in this file — if one is ever needed, a framework dependency has
+/// leaked into the panel model.
+///
+/// **Form factor is not modelled here.** The shell decides dock-vs-overlay from
+/// the platform; this class only resolves the docked width. Window width shrinks
+/// the panel rather than collapsing it, so only the user's preference makes a
+/// rail.
 void main() {
-  group('constants', () {
-    test('the docking breakpoint is derived, not chosen', () {
-      expect(PanelGeometry.dockBreakpoint, 900.0);
-      expect(
-        PanelGeometry.dockBreakpoint,
-        PanelGeometry.minExpandedWidth / PanelGeometry.maxWidthFraction,
-      );
-    });
-  });
-
   group('expandedWidthFor', () {
     test('is exactly 20% between 900 and 1600', () {
       for (final width in [900.0, 1000.0, 1200.0, 1400.0, 1599.0, 1600.0]) {
@@ -26,13 +21,8 @@ void main() {
       }
     });
 
-    test('is the minimum at the breakpoint', () {
+    test('is the minimum at 900', () {
       expect(PanelGeometry.expandedWidthFor(900), 180.0);
-    });
-
-    test('is continuous either side of the breakpoint', () {
-      expect(PanelGeometry.expandedWidthFor(900), 180.0);
-      expect(PanelGeometry.expandedWidthFor(901), moreOrLessEquals(180.2));
     });
 
     test('clamps at the maximum and stops growing', () {
@@ -41,7 +31,7 @@ void main() {
       expect(PanelGeometry.expandedWidthFor(4000), 320.0);
     });
 
-    test('never violates the 20% proportion for any dockable width', () {
+    test('never violates the 20% proportion at or above 900', () {
       for (var width = 900.0; width <= 3000; width += 7) {
         final resolved = PanelGeometry.expandedWidthFor(width);
         expect(
@@ -49,6 +39,18 @@ void main() {
           lessThanOrEqualTo(width * PanelGeometry.maxWidthFraction + 0.0001),
           reason: 'panel must not exceed 20% of the window at $width px',
         );
+      }
+    });
+
+    test('leaves at least minContentWidth for the centre page', () {
+      for (final width in [320.0, 400.0, 480.0, 700.0, 900.0, 1600.0]) {
+        final panel = PanelGeometry.expandedWidthFor(width);
+        expect(
+          width - panel,
+          greaterThanOrEqualTo(PanelGeometry.minContentWidth - 0.001),
+          reason: 'at $width px the centre page must stay usable',
+        );
+        expect(panel, greaterThanOrEqualTo(PanelGeometry.railWidth));
       }
     });
 
@@ -71,35 +73,9 @@ void main() {
   });
 
   group('isCollapsed', () {
-    test('below the breakpoint the panel is a rail regardless of intent', () {
-      expect(
-        PanelGeometry.isCollapsed(windowWidth: 700, collapsedByUser: false),
-        isTrue,
-      );
-      expect(
-        PanelGeometry.isCollapsed(windowWidth: 899, collapsedByUser: false),
-        isTrue,
-      );
-    });
-
-    test('at or above the breakpoint, intent decides', () {
-      expect(
-        PanelGeometry.isCollapsed(windowWidth: 900, collapsedByUser: false),
-        isFalse,
-      );
-      expect(
-        PanelGeometry.isCollapsed(windowWidth: 1600, collapsedByUser: true),
-        isTrue,
-      );
-    });
-
-    test('a narrow window always collapses, even when the user said expanded', () {
-      for (var width = 0.0; width < 900; width += 13) {
-        expect(
-          PanelGeometry.isCollapsed(windowWidth: width, collapsedByUser: false),
-          isTrue,
-        );
-      }
+    test('is the user preference alone; window width does not force a rail', () {
+      expect(PanelGeometry.isCollapsed(collapsedByUser: false), isFalse);
+      expect(PanelGeometry.isCollapsed(collapsedByUser: true), isTrue);
     });
   });
 
@@ -116,7 +92,7 @@ void main() {
   });
 
   group('widthFor', () {
-    test('returns the derived width when expanded and dockable', () {
+    test('returns the expanded width when expanded', () {
       expect(
         PanelGeometry.widthFor(windowWidth: 1200, collapsedByUser: false),
         240.0,
@@ -130,27 +106,24 @@ void main() {
       );
     });
 
-    test('returns the rail on a narrow window', () {
+    test('narrows, rather than collapsing, on a small window', () {
       expect(
         PanelGeometry.widthFor(windowWidth: 500, collapsedByUser: false),
-        56.0,
+        180.0,
       );
     });
 
-    test('the centre page always keeps a positive share', () {
+    test('the expanded panel always leaves minContentWidth', () {
       for (final width in [320.0, 480.0, 700.0, 900.0, 1200.0, 2560.0]) {
-        for (final collapsed in [true, false]) {
-          final panelWidth = PanelGeometry.widthFor(
-            windowWidth: width,
-            collapsedByUser: collapsed,
-          );
-          expect(
-            width - panelWidth,
-            greaterThan(0),
-            reason: 'centre page must stay usable at $width px '
-                '(collapsed: $collapsed)',
-          );
-        }
+        final panelWidth = PanelGeometry.widthFor(
+          windowWidth: width,
+          collapsedByUser: false,
+        );
+        expect(
+          width - panelWidth,
+          greaterThanOrEqualTo(PanelGeometry.minContentWidth - 0.001),
+          reason: 'centre page must stay usable at $width px',
+        );
       }
     });
 

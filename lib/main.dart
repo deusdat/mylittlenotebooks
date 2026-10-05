@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:mylittlenotebooks/app.dart';
 import 'package:mylittlenotebooks/bootstrap.dart';
+import 'package:mylittlenotebooks/data/note_environment.dart';
 
 /// Application entry point.
 ///
@@ -22,6 +25,16 @@ Future<void> main() async {
       initialNotebooks: deps.initialNotebooks,
       aiConfigs: deps.aiConfigs,
       initialAiConfigs: deps.initialAiConfigs,
+      noteEnv: NoteEnvironment(
+        notes: deps.notes,
+        chatMessages: deps.chatMessages,
+        embedding: deps.embedding,
+      ),
     ),
   );
+
+  // Boot recovery (spec FR11a): after the first frame, re-embed any note left
+  // in-process by an interrupted save. Fire-and-forget; each note commits on
+  // its own, so progress is durable.
+  unawaited(deps.embedding.recoverAll());
 }

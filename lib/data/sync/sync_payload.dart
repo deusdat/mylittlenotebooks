@@ -378,6 +378,218 @@ class AiConfigDto {
   }
 }
 
+/// A note's body as it travels (spec FR20).
+class NoteDocumentDto {
+  final String uuid;
+  final String noteUuid;
+  final String markdown;
+  final VersionDto version;
+
+  const NoteDocumentDto({
+    required this.uuid,
+    required this.noteUuid,
+    required this.markdown,
+    required this.version,
+  });
+
+  Map<String, Object?> toJson() => {
+        'uuid': uuid,
+        'n': noteUuid,
+        'm': markdown,
+        'v': version.toJson(),
+      };
+
+  static NoteDocumentDto? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final version = VersionDto.fromJson(raw['v']);
+    final uuid = raw['uuid'];
+    final noteUuid = raw['n'];
+    final markdown = raw['m'];
+    if (version == null ||
+        uuid is! String ||
+        noteUuid is! String ||
+        markdown is! String) {
+      return null;
+    }
+    return NoteDocumentDto(
+      uuid: uuid,
+      noteUuid: noteUuid,
+      markdown: markdown,
+      version: version,
+    );
+  }
+}
+
+/// One note chunk as it travels. [noteUuid] is the portable parent reference;
+/// the vector is base64 over raw float32 bytes.
+class NoteChunkDto {
+  final String uuid;
+  final int chunkIndex;
+  final String content;
+  final int tokenCount;
+  final String noteUuid;
+  final String embeddingBase64;
+  final VersionDto version;
+
+  const NoteChunkDto({
+    required this.uuid,
+    required this.chunkIndex,
+    required this.content,
+    required this.tokenCount,
+    required this.noteUuid,
+    required this.embeddingBase64,
+    required this.version,
+  });
+
+  Map<String, Object?> toJson() => {
+        'uuid': uuid,
+        'i': chunkIndex,
+        'c': content,
+        't': tokenCount,
+        'n': noteUuid,
+        'e': embeddingBase64,
+        'v': version.toJson(),
+      };
+
+  static NoteChunkDto? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final version = VersionDto.fromJson(raw['v']);
+    final uuid = raw['uuid'];
+    final chunkIndex = raw['i'];
+    final content = raw['c'];
+    final tokenCount = raw['t'];
+    final noteUuid = raw['n'];
+    final embedding = raw['e'];
+    if (version == null ||
+        uuid is! String ||
+        chunkIndex is! int ||
+        content is! String ||
+        tokenCount is! int ||
+        noteUuid is! String ||
+        embedding is! String) {
+      return null;
+    }
+    return NoteChunkDto(
+      uuid: uuid,
+      chunkIndex: chunkIndex,
+      content: content,
+      tokenCount: tokenCount,
+      noteUuid: noteUuid,
+      embeddingBase64: embedding,
+      version: version,
+    );
+  }
+}
+
+/// A note's metadata, body, and chunk set as it travels (spec FR19, FR20).
+///
+/// The three axes are independently versioned exactly as a publication's:
+/// [version] covers metadata and edges, [chunkSetVersion] the chunk set, and
+/// [document]'s own version the body.
+class NoteDto {
+  final String uuid;
+  final String? title;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  final String embeddingModelId;
+
+  final int declaredChunkCount;
+  final bool chunksIncluded;
+
+  final VersionDto version;
+  final VersionDto chunkSetVersion;
+
+  final List<String> notebookUuids;
+
+  final NoteDocumentDto? document;
+  final List<NoteChunkDto> chunks;
+
+  const NoteDto({
+    required this.uuid,
+    required this.title,
+    required this.createdAt,
+    required this.updatedAt,
+    required this.embeddingModelId,
+    required this.declaredChunkCount,
+    required this.version,
+    required this.chunkSetVersion,
+    this.chunksIncluded = true,
+    required this.notebookUuids,
+    this.document,
+    this.chunks = const [],
+  });
+
+  Map<String, Object?> toJson() => {
+        'uuid': uuid,
+        'title': title,
+        'created': createdAt.millisecondsSinceEpoch,
+        'updated': updatedAt.millisecondsSinceEpoch,
+        'model': embeddingModelId,
+        'declaredChunks': declaredChunkCount,
+        'chunksIncluded': chunksIncluded,
+        'v': version.toJson(),
+        'csv': chunkSetVersion.toJson(),
+        'notebooks': notebookUuids,
+        'document': document?.toJson(),
+        'chunks': chunks.map((c) => c.toJson()).toList(),
+      };
+
+  static NoteDto? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final version = VersionDto.fromJson(raw['v']);
+    final chunkSetVersion = VersionDto.fromJson(raw['csv']);
+    final uuid = raw['uuid'];
+    final title = raw['title'];
+    final created = raw['created'];
+    final updated = raw['updated'];
+    final model = raw['model'];
+    final declared = raw['declaredChunks'];
+    // Absent means `true`, matching the publication DTO's backward-compatible
+    // default.
+    final chunksIncluded = raw['chunksIncluded'] ?? true;
+    final notebooks = raw['notebooks'];
+    if (version == null ||
+        chunkSetVersion == null ||
+        uuid is! String ||
+        (title != null && title is! String) ||
+        created is! int ||
+        updated is! int ||
+        model is! String ||
+        declared is! int ||
+        chunksIncluded is! bool ||
+        notebooks is! List) {
+      return null;
+    }
+
+    final rawChunks = raw['chunks'];
+    final chunks = <NoteChunkDto>[];
+    if (rawChunks is List) {
+      for (final entry in rawChunks) {
+        final parsed = NoteChunkDto.fromJson(entry);
+        if (parsed == null) return null; // total: never half-populated
+        chunks.add(parsed);
+      }
+    } else if (rawChunks != null) {
+      return null;
+    }
+
+    return NoteDto(
+      uuid: uuid,
+      title: title as String?,
+      createdAt: DateTime.fromMillisecondsSinceEpoch(created, isUtc: true),
+      updatedAt: DateTime.fromMillisecondsSinceEpoch(updated, isUtc: true),
+      embeddingModelId: model,
+      declaredChunkCount: declared,
+      chunksIncluded: chunksIncluded,
+      version: version,
+      chunkSetVersion: chunkSetVersion,
+      notebookUuids: notebooks.whereType<String>().toList(),
+      document: NoteDocumentDto.fromJson(raw['document']),
+      chunks: chunks,
+    );
+  }
+}
+
 /// A delete, as it travels.///
 /// Just a uuid and a version. It carries nothing about the deleted object's
 /// children, because the receiver derives all of them **locally** from its own
@@ -411,11 +623,16 @@ class SyncPayload {
   /// is never a plain upsert; see [AiConfigDto].
   final List<AiConfigDto> aiConfigs;
 
+  /// Notes (spec FR20). Additive: an old payload carries no `notes` key and
+  /// decodes to an empty list.
+  final List<NoteDto> notes;
+
   const SyncPayload({
     this.notebooks = const [],
     required this.publications,
     required this.deletes,
     this.aiConfigs = const [],
+    this.notes = const [],
   });
 
   Map<String, Object?> toJson() => {
@@ -423,6 +640,7 @@ class SyncPayload {
         'publications': publications.map((p) => p.toJson()).toList(),
         'deletes': deletes.map((d) => d.toJson()).toList(),
         'aiConfigs': aiConfigs.map((c) => c.toJson()).toList(),
+        'notes': notes.map((n) => n.toJson()).toList(),
       };
 
   /// Returns null if anything in the payload is malformed. Total by
@@ -434,10 +652,13 @@ class SyncPayload {
     final rawDeletes = raw['deletes'];
     // Absent means old payloads predate this field; they carry no configs.
     final rawAiConfigs = raw['aiConfigs'] ?? const [];
+    // Likewise absent means a notes-blind peer; it carries no notes.
+    final rawNotes = raw['notes'] ?? const [];
     if (rawNotebooks is! List ||
         rawPublications is! List ||
         rawDeletes is! List ||
-        rawAiConfigs is! List) {
+        rawAiConfigs is! List ||
+        rawNotes is! List) {
       return null;
     }
 
@@ -466,11 +687,18 @@ class SyncPayload {
       if (parsed == null) return null;
       aiConfigs.add(parsed);
     }
+    final notes = <NoteDto>[];
+    for (final entry in rawNotes) {
+      final parsed = NoteDto.fromJson(entry);
+      if (parsed == null) return null;
+      notes.add(parsed);
+    }
     return SyncPayload(
       notebooks: notebooks,
       publications: publications,
       deletes: deletes,
       aiConfigs: aiConfigs,
+      notes: notes,
     );
   }
 }

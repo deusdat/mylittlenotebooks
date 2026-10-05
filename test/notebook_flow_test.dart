@@ -1,3 +1,4 @@
+import 'package:mylittlenotebooks/shell/form_factor.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,6 +7,7 @@ import 'package:mylittlenotebooks/data/ai_config_repository.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
+import 'test_note_env.dart';
 
 ({App app, NotebookRepository repo}) buildTestApp({int seedCount = 3}) {
   final repository = InMemoryNotebookRepository();
@@ -20,6 +22,7 @@ import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
       initialNotebooks: repository.list(),
       aiConfigs: InMemoryAiConfigRepository(),
       initialAiConfigs: const [],
+      noteEnv: testNoteEnvironment(),
     ),
     repo: repository,
   );
@@ -30,6 +33,11 @@ Finder tileWithLabel(String label) => find.byWidgetPredicate(
 );
 
 void main() {
+  // Desktop (docked panel) is the default under test; narrower widths are
+  // covered explicitly in app_shell_widget_test.
+  setUp(() => formFactorOverride = TargetPlatform.macOS);
+  tearDown(() => formFactorOverride = null);
+
   setUp(() {
     final view = TestWidgetsFlutterBinding.ensureInitialized();
     expect(view, isNotNull);

@@ -53,10 +53,23 @@ String chunkUuidFor(String publicationUuid, int chunkIndex) =>
 /// of forking a second one.
 String documentUuidFor(String publicationUuid) => 'd-$publicationUuid';
 
+/// Deterministic note-chunk identity (spec FR25).
+///
+/// Symmetric with [chunkUuidFor] and for the same reasons: globally unique
+/// because the note uuid is, computed identically on every device, and
+/// idempotent when a whole note chunk set is replaced.
+String noteChunkUuidFor(String noteUuid, int chunkIndex) =>
+    'nc-$noteUuid-$chunkIndex';
+
+/// Deterministic note-body identity (spec FR25).
+///
+/// A note has at most one body, so this is derived from the note uuid alone.
+String noteDocumentUuidFor(String noteUuid) => 'nd-$noteUuid';
+
 /// Whether [value] is a well-formed 128-bit uuid.
 ///
 /// The **strict RFC 4122/9562** check. This applies to the uuids that are
-/// genuinely RFC-shaped: notebooks and publications.
+/// genuinely RFC-shaped: notebooks, publications, and notes.
 ///
 /// It deliberately does **not** accept the derived forms below, because a
 /// composed identifier is not a uuid by that definition. Use
@@ -71,15 +84,25 @@ final _chunkIdPattern = RegExp(r'^c-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-'
 final _documentIdPattern =
     RegExp(r'^d-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
 
+/// The note-derived forms. `nc-`/`nd-` cannot collide with `c-`/`d-` because
+/// both anchors require the prefix at the start of the string.
+final _noteChunkIdPattern = RegExp(
+    r'^nc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-\d+$');
+
+final _noteDocumentIdPattern = RegExp(
+    r'^nd-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+
 /// Whether [value] is a well-formed identifier **in this app's scheme**.
 ///
-/// Three forms exist, and every one of them legitimately crosses the wire:
+/// Five forms exist, and every one of them legitimately crosses the wire:
 ///
 /// | Form | Produced by | Used for |
 /// |---|---|---|
-/// | RFC 4122/9562 uuid | [newUuidV7] | notebooks, publications |
-/// | `c-<publicationUuid>-<chunkIndex>` | [chunkUuidFor] | chunks |
-/// | `d-<publicationUuid>` | [documentUuidFor] | documents |
+/// | RFC 4122/9562 uuid | [newUuidV7] | notebooks, publications, notes |
+/// | `c-<publicationUuid>-<chunkIndex>` | [chunkUuidFor] | publication chunks |
+/// | `d-<publicationUuid>` | [documentUuidFor] | publication documents |
+/// | `nc-<noteUuid>-<chunkIndex>` | [noteChunkUuidFor] | note chunks |
+/// | `nd-<noteUuid>` | [noteDocumentUuidFor] | note bodies |
 ///
 /// **This is the receive-side guard.** An identifier arriving from a peer must
 /// be validated before it is stored or turned into a lookup — a malformed one
@@ -91,12 +114,14 @@ final _documentIdPattern =
 bool isValidIdentifier(String value) =>
     isValidUuid(value) ||
     _chunkIdPattern.hasMatch(value) ||
-    _documentIdPattern.hasMatch(value);
+    _documentIdPattern.hasMatch(value) ||
+    _noteChunkIdPattern.hasMatch(value) ||
+    _noteDocumentIdPattern.hasMatch(value);
 
 /// The publication uuid embedded in a derived chunk or document identifier.
 ///
-/// Returns null when [value] is not a derived form — which is also how callers
-/// tell a derived identifier apart from a plain uuid.
+/// Returns null when [value] is not a derived publication form — which is also
+/// how callers tell a derived identifier apart from a plain uuid.
 String? parentPublicationUuidOf(String identifier) {
   final chunk = _chunkIdPattern.firstMatch(identifier);
   if (chunk != null) {
@@ -105,6 +130,18 @@ String? parentPublicationUuidOf(String identifier) {
   }
   if (_documentIdPattern.hasMatch(identifier)) {
     return identifier.substring(2);
+  }
+  return null;
+}
+
+/// The note uuid embedded in a derived note-chunk or note-document identifier.
+String? parentNoteUuidOf(String identifier) {
+  final chunk = _noteChunkIdPattern.firstMatch(identifier);
+  if (chunk != null) {
+    return identifier.substring(3, identifier.lastIndexOf('-'));
+  }
+  if (_noteDocumentIdPattern.hasMatch(identifier)) {
+    return identifier.substring(3);
   }
   return null;
 }

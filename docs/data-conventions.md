@@ -436,3 +436,88 @@ cryptic `Null check operator used on a null value` from the generator — but
   scope.
 - **A migration path.** No user data exists. Needed before the first *shipped*
   schema, not the first working one.
+
+## Notes (add-notes feature)
+
+A **note** mirrors a publication: an optional title, a body in its own
+`ObNoteDocument` row, a many-to-many edge to notebooks, a `ToMany<ObNoteChunk>`,
+and three independently-versioned sync axes (`versionCounter`, `chunkSetVersion`,
+the document's own version). Entities: `ObNote`, `ObNoteDocument`,
+`ObNoteChunk`, `ObChatMessage` (local-only).
+
+**Reference sites 8–14.** `UuidScope` now rewrites seven *more* places, and each
+must be written twice — the denormalised `noteId` column **and** the relation —
+and they must agree afterwards (see `sync-conventions.md`). The two
+`@TargetIdProperty` renames (`noteRef`, `noteOwnerId`) are mandatory, exactly as
+`publicationRef`/`documentOwnerId` are: without them codegen fails on a `noteId`
+collision.
+
+**`deleteNotebook` returns `NotebookCascade { publications, notes }`.** Notes
+cascade by the same exclusivity rule as publications; a shared note survives.
+`cascadeNoteRows` is the one note cascade, shared by `deleteNote` and the
+notebook delete.
+
+**Note search** (`NoteSearchRepository`) reuses `FetchBudget` for the same
+reason publication search does: `nearestNeighborsF32`'s `maxResultCount` bounds
+the ANN sub-query before the `noteId` filter.
+
+## The note embedding stack
+
+| Piece | Location |
+|---|---|
+| Chunker (heading-aware + token window) | `lib/data/embedding/text_chunker.dart` |
+| Embedder seam + deterministic fake | `lib/data/embedding/embedder.dart` |
+| ONNX embedder (pipeline) | `lib/data/embedding/onnx_embedder.dart` |
+| WordPiece tokenizer (pure Dart default) | `lib/data/embedding/wordpiece_tokenizer.dart` |
+| Asset copy-once | `lib/data/embedding/model_assets.dart` |
+| Rust tokenizer crate (pinned fast path) | `native/rust_tokenizer/` + `flutter_rust_bridge.yaml` |
+| Indexer (chunk → embed → drafts) | `lib/data/embedding/note_indexer.dart` |
+
+**Stack:** `nomic-embed-text-v1.5` → ONNX (dynamic INT8) → `onnxruntime`; MRL
+truncation to the 256 dims the HNSW index requires; mean-pool over the attention
+mask, then L2-normalise. The mandatory task prefixes (`search_document: ` /
+`search_query: `) are applied **inside** the embedder, never by the caller.
+
+**Inference runs off the UI isolate** via `OrtSession.runAsync`, which reuses one
+background session. The model is opened exactly once per app session.
+
+### The model asset is a build artifact
+
+The ONNX model is **not tracked in git**. It is ~131 MB (over GitHub's 100 MB
+limit) and reproducible from a pinned source, so it is treated like
+`libobjectbox.dylib`: fetched once per checkout.
+
+```
+make install_model   # or: make setup   (also installs objectbox)
+```
+
+`make install_model` downloads `onnx/model_quantized.onnx` from
+`nomic-ai/nomic-embed-text-v1.5` at a **pinned revision** and verifies its
+**SHA-256** (both in the `Makefile`) into
+`assets/models/nomic_embed_text_v1.5_quantized.onnx`, which is gitignored. It is
+idempotent: a present, checksum-matching file is left alone.
+
+**It is required before `flutter run`/build.** The asset is declared under
+`flutter.assets:`, and Flutter fails a build when a declared asset is missing.
+`tokenizer.json` (695 KB) is small and **is** committed.
+
+The model has **three inputs** — `input_ids`, `attention_mask`, and
+`token_type_ids` (all zeros for a single sequence) — and outputs
+`last_hidden_state` `[1, seq, 768]`; pooling, truncation, and normalisation are
+done in Dart (`onnx_embedder.dart`).
+
+`ModelAssets.modelFile()` copies the asset to the app-support directory once and
+hands the runtime that path; `bootstrapDependencies` loads it once and logs
+`ONNX embedder ready`. If an asset is ever missing it logs and falls back to the
+deterministic embedder. The `onnxruntime` plugin vendors its native library per
+platform via its podspec (the macOS bundle contains
+`libonnxruntime.1.15.1.dylib`), which is why the stack runs in the app but the
+host `flutter test` suite skips the end-to-end ONNX test.
+
+### Swapping the tokenizer for the Rust bridge (optional)
+
+The pure-Dart `WordPieceTokenizer` is the default. To use the pinned Rust fast
+path: run `flutter_rust_bridge_codegen generate` (config in
+`flutter_rust_bridge.yaml`), then construct the bridge's `Tokenizer`
+implementation instead of `WordPieceTokenizer` in `bootstrap.dart`. The
+`Tokenizer` seam is unchanged.

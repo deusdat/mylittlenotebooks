@@ -1,9 +1,12 @@
 import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/data/objectbox_library_repository.dart';
+import 'package:mylittlenotebooks/data/objectbox_note_repository.dart';
 import 'package:mylittlenotebooks/data/secrets/flutter_secure_token_store.dart';
 import 'package:mylittlenotebooks/data/secrets/token_store.dart';
 import 'package:mylittlenotebooks/data/sync/device_id.dart';
@@ -15,6 +18,7 @@ import 'package:mylittlenotebooks/data/sync/sync_tombstones.dart';
 import 'package:mylittlenotebooks/data/sync/sync_validator.dart';
 import 'package:mylittlenotebooks/data/sync/sync_version.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
+import 'package:mylittlenotebooks/models/note.dart';
 import 'package:mylittlenotebooks/objectbox.g.dart';
 
 /// Applies an incoming payload to this device (spec FR5, FR5a, FR5b, FR6, FR7,
@@ -83,10 +87,12 @@ class SyncApplier {
           deviceId: deviceId,
           tombstones: tombstones,
         ),
-        _library = ObjectBoxLibraryRepository(store);
+        _library = ObjectBoxLibraryRepository(store),
+        _noteLibrary = ObjectBoxNoteRepository(store);
 
   final Store _store;
   final ObjectBoxLibraryRepository _library;
+  final ObjectBoxNoteRepository _noteLibrary;
   final TombstoneStore _tombstones;
   final SyncDeleter _deleter;
 
@@ -120,6 +126,9 @@ class SyncApplier {
     for (final publication in payload.publications) {
       validateChunkSet(publication);
     }
+    for (final note in payload.notes) {
+      validateNoteChunkSet(note);
+    }
 
     // Secret operations the rows imply but cannot perform inside a transaction.
     final pendingSecrets = <PendingSecret>[];
@@ -149,6 +158,14 @@ class SyncApplier {
     for (final publication in payload.publications) {
       final plan = _plan(publication);
       if (plan != null) plans.add(plan);
+    }
+
+    // Notes reference notebooks too, so they are planned and applied after the
+    // roots, alongside publications.
+    final notePlans = <_NotePlan>[];
+    for (final note in payload.notes) {
+      final plan = _planNote(note);
+      if (plan != null) notePlans.add(plan);
     }
 
     // 3. Deletes, then roots, then publications. One transaction each.
@@ -183,6 +200,14 @@ class SyncApplier {
       if (plan.vectorsGated) vectorsRefused.add(plan.dto.uuid);
     }
 
+    var notesApplied = 0;
+    final noteVectorsRefused = <String>[];
+    for (final plan in notePlans) {
+      _applyNote(plan);
+      notesApplied++;
+      if (plan.vectorsGated) noteVectorsRefused.add(plan.dto.uuid);
+    }
+
     return IngestResult(
       notebooksApplied: notebooksApplied,
       publicationsApplied: applied,
@@ -192,6 +217,9 @@ class SyncApplier {
       configsApplied: configsApplied,
       configsRemoved: configsRemoved,
       pendingSecrets: List.unmodifiable(pendingSecrets),
+      notesApplied: notesApplied,
+      notesSkipped: payload.notes.length - notePlans.length,
+      noteVectorsRefused: List.unmodifiable(noteVectorsRefused),
     );
   }
 
@@ -372,6 +400,52 @@ class SyncApplier {
     );
   }
 
+  /// Decides what a single note record will do, or null when nothing will
+  /// (spec FR22). The note analogue of [_plan], across the same three axes.
+  _NotePlan? _planNote(NoteDto dto) {
+    if (_tombstones.isDead(dto.uuid)) return null;
+
+    final local = _findNote(dto.uuid);
+    final localVersion = local == null
+        ? noVersion
+        : (counter: local.versionCounter, deviceId: _deviceId);
+    final incomingVersion = dto.version.toDomain();
+    final applyMetadata = supersedes(incomingVersion, localVersion);
+
+    final localChunkVersion = local == null
+        ? noVersion
+        : (counter: local.chunkSetVersion, deviceId: _deviceId);
+    final modelMatches = dto.embeddingModelId == activeEmbeddingModelId;
+    final applyChunkSet = dto.chunksIncluded &&
+        modelMatches &&
+        supersedes(dto.chunkSetVersion.toDomain(), localChunkVersion);
+    // The model gate withholds vectors without blocking the body (spec FR22).
+    final vectorsGated =
+        dto.chunksIncluded && !modelMatches && dto.chunks.isNotEmpty;
+
+    final document = dto.document;
+    final localDocument =
+        document == null ? null : _findNoteDocument(document.uuid);
+    final applyDocument = document != null &&
+        supersedes(
+          document.version.toDomain(),
+          localDocument == null
+              ? noVersion
+              : (counter: localDocument.versionCounter, deviceId: _deviceId),
+        );
+
+    if (!applyMetadata && !applyChunkSet && !applyDocument) return null;
+
+    return _NotePlan(
+      dto: dto,
+      applyMetadata: applyMetadata,
+      applyChunkSet: applyChunkSet,
+      applyDocument: applyDocument,
+      vectorsGated: vectorsGated,
+      keepLocalModelLabel: !modelMatches && (local?.chunkCount ?? 0) > 0,
+    );
+  }
+
   // --- writes ----------------------------------------------------------------
 
   void _applyPublication(_Plan plan) {
@@ -457,6 +531,85 @@ class SyncApplier {
     });
   }
 
+  /// Applies a planned note (spec FR22). One transaction per note DAG, in the
+  /// order metadata → body → chunk set.
+  void _applyNote(_NotePlan plan) {
+    final dto = plan.dto;
+    final scope = _scope;
+
+    _store.runInTransaction(TxMode.write, () {
+      final noteId = scope.resolveNote(dto.uuid);
+
+      if (plan.applyMetadata) {
+        final note = _requireNote(noteId);
+        note.title = dto.title;
+        note.updatedAt = DateTime.fromMillisecondsSinceEpoch(
+          dto.updatedAt.millisecondsSinceEpoch,
+          isUtc: true,
+        );
+        note.versionCounter = dto.version.toDomain().counter;
+        if (!plan.keepLocalModelLabel) {
+          note.embeddingModelId = dto.embeddingModelId;
+        }
+        if (plan.vectorsGated) {
+          // The peer's vectors were withheld by the model gate; this device must
+          // build them locally, so mark it for boot recovery (spec FR11a).
+          note.embeddingState = NoteEmbeddingState.inProcess.storage;
+        }
+        // A tombstoned notebook is filtered before resolution so a dead
+        // notebook cannot be resurrected as an untitled row (spec FR21, FR22).
+        _syncNoteBookEdges(
+          scope,
+          note,
+          dto.notebookUuids.where((u) => !_tombstones.isDead(u)).toList(),
+        );
+        _notes.put(note);
+      }
+
+      if (plan.applyDocument) {
+        final document = dto.document!;
+        final documentId = scope.resolveNoteDocument(document.uuid, noteId);
+        // Sites 11 and 12 are written by `resolveNoteDocument`; the text and its
+        // version here.
+        final row = _requireNoteDocument(documentId);
+        row.markdown = document.markdown;
+        row.versionCounter = document.version.toDomain().counter;
+        _noteDocuments.put(row);
+        scope.attachNoteDocument(noteId: noteId, documentId: documentId);
+      }
+
+      if (plan.applyChunkSet) {
+        // Reuse the data layer's write path so there is exactly one place that
+        // inserts note chunks.
+        _noteLibrary.replaceChunks(dto.uuid, _noteDrafts(dto.chunks));
+        final note = _requireNote(noteId);
+        note.chunkSetVersion = dto.chunkSetVersion.toDomain().counter;
+        note.versionCounter = plan.applyMetadata
+            ? dto.version.toDomain().counter
+            : note.versionCounter;
+        _notes.put(note);
+      }
+      // `return null` keeps the callback off `Never` (the ObjectBox trap).
+      return null;
+    });
+  }
+
+  /// Rewrites [note]'s notebook edges to be exactly [wanted]. Mutates only; the
+  /// caller writes the row. Uses `removeWhere` on the id (spec FR21).
+  void _syncNoteBookEdges(UuidScope scope, ObNote note, List<String> wanted) {
+    final wantedIds = <int>{};
+    for (final uuid in wanted) {
+      wantedIds.add(scope.resolveNotebook(uuid));
+    }
+
+    note.notebooks.removeWhere((n) => !wantedIds.contains(n.id));
+    for (final id in wantedIds) {
+      if (note.notebooks.any((n) => n.id == id)) continue;
+      final notebook = _notebooks.get(id);
+      if (notebook != null) note.notebooks.add(notebook);
+    }
+  }
+
   /// The **local** publication delete path: cascades and tombstones, stamping a
   /// version so the delete can be selected into a later push (FR11).
   ///
@@ -476,7 +629,12 @@ class SyncApplier {
     final notebook = _findNotebook(delete.uuid);
     final publication =
         notebook == null ? _findPublication(delete.uuid) : null;
-    final config = notebook == null && publication == null
+    // Notes resolve between publications and configs (spec FR23). The uuid is
+    // globally unique, so at most one branch matches.
+    final note = notebook == null && publication == null
+        ? _findNote(delete.uuid)
+        : null;
+    final config = notebook == null && publication == null && note == null
         ? _findConfig(delete.uuid)
         : null;
 
@@ -488,6 +646,8 @@ class SyncApplier {
         _notebooks.remove(notebook.id);
       } else if (publication != null) {
         _cascade(publication);
+      } else if (note != null) {
+        cascadeNoteRows(_store, note);
       } else if (config != null) {
         _configs.remove(config.id);
       }
@@ -585,6 +745,16 @@ class SyncApplier {
           ),
       ];
 
+  List<ChunkDraft> _noteDrafts(List<NoteChunkDto> chunks) => [
+        for (final chunk in chunks)
+          ChunkDraft(
+            chunkIndex: chunk.chunkIndex,
+            content: chunk.content,
+            tokenCount: chunk.tokenCount,
+            embedding: decodeVector(chunk.embeddingBase64),
+          ),
+      ];
+
   // --- reads -----------------------------------------------------------------
 
   Box<ObPublication> get _publications => _store.box<ObPublication>();
@@ -592,6 +762,8 @@ class SyncApplier {
   Box<ObChunk> get _chunks => _store.box<ObChunk>();
   Box<ObNotebook> get _notebooks => _store.box<ObNotebook>();
   Box<ObAiConfig> get _configs => _store.box<ObAiConfig>();
+  Box<ObNote> get _notes => _store.box<ObNote>();
+  Box<ObNoteDocument> get _noteDocuments => _store.box<ObNoteDocument>();
 
   UuidScope get _scope => UuidScope(_store);
 
@@ -649,6 +821,37 @@ class SyncApplier {
   ObDocument _requireDocument(int id) {
     final row = _documents.get(id);
     if (row == null) throw StateError('no document with id $id');
+    return row;
+  }
+
+  ObNote? _findNote(String uuid) {
+    final query = _notes.query(ObNote_.uuid.equals(uuid)).build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  ObNote _requireNote(int id) {
+    final row = _notes.get(id);
+    if (row == null) throw StateError('no note with id $id');
+    return row;
+  }
+
+  ObNoteDocument? _findNoteDocument(String uuid) {
+    final query =
+        _noteDocuments.query(ObNoteDocument_.uuid.equals(uuid)).build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  ObNoteDocument _requireNoteDocument(int id) {
+    final row = _noteDocuments.get(id);
+    if (row == null) throw StateError('no note document with id $id');
     return row;
   }
 
@@ -746,6 +949,16 @@ class IngestResult {
   /// synchronous [SyncApplier.ingest] directly must perform these itself.
   final List<PendingSecret> pendingSecrets;
 
+  /// Notes written, whether by metadata, body, or chunk set (spec FR22).
+  final int notesApplied;
+
+  /// Notes refused: tombstoned or outranked by the local version.
+  final int notesSkipped;
+
+  /// Notes whose metadata/body arrived but whose vectors the model gate
+  /// withheld (spec FR22).
+  final List<String> noteVectorsRefused;
+
   const IngestResult({
     required this.notebooksApplied,
     required this.publicationsApplied,
@@ -755,6 +968,9 @@ class IngestResult {
     this.configsApplied = 0,
     this.configsRemoved = 0,
     this.pendingSecrets = const [],
+    this.notesApplied = 0,
+    this.notesSkipped = 0,
+    this.noteVectorsRefused = const [],
   });
 
   @override
@@ -762,7 +978,8 @@ class IngestResult {
       'applied: $publicationsApplied, '
       'skipped: $publicationsSkipped, deleted: $deletesApplied, '
       'configs: $configsApplied, configsRemoved: $configsRemoved, '
-      'vectorsRefused: $vectorsRefused)';
+      'vectorsRefused: $vectorsRefused, notes: $notesApplied, '
+      'notesSkipped: $notesSkipped, noteVectorsRefused: $noteVectorsRefused)';
 }
 
 /// One planned publication, decided before anything was resolved or written.
@@ -781,6 +998,31 @@ class _Plan {
   final bool keepLocalModelLabel;
 
   const _Plan({
+    required this.dto,
+    required this.applyMetadata,
+    required this.applyChunkSet,
+    required this.applyDocument,
+    required this.vectorsGated,
+    required this.keepLocalModelLabel,
+  });
+}
+
+/// One planned note, decided before anything was resolved or written
+/// (spec FR22).
+class _NotePlan {
+  final NoteDto dto;
+  final bool applyMetadata;
+  final bool applyChunkSet;
+  final bool applyDocument;
+
+  /// The set arrived but was withheld because the models differ.
+  final bool vectorsGated;
+
+  /// Leave `embeddingModelId` alone: this note already holds chunks produced by
+  /// the local model.
+  final bool keepLocalModelLabel;
+
+  const _NotePlan({
     required this.dto,
     required this.applyMetadata,
     required this.applyChunkSet,

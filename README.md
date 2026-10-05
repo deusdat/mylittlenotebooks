@@ -11,9 +11,15 @@ Currently this repository contains:
 - **The publication data layer** — durable notebooks, publications, chunks, and
   an embedded vector store with scoped semantic search. See
   [`specs/1790958509972-publication-data-layer/`](./specs/1790958509972-publication-data-layer/).
+- **Notes** — add, read, edit, embed, and sync user-authored notes, plus a
+  note-scoped retrieval path and the chat panel's display groundwork. See
+  [`specs/1791121654000-add-notes/`](./specs/1791121654000-add-notes/).
 
-Embedding inference, document chunking, and the sources UI are not built yet.
-The data layer's interfaces are the seam they plug into.
+The note embedding stack (`nomic-embed-text-v1.5` → ONNX → `onnxruntime`) is
+active. The model is a **build artifact** (~131 MB, fetched by
+`make install_model`), not tracked in git; the tokenizer is committed. See
+[`docs/data-conventions.md`](./docs/data-conventions.md#the-model-asset-is-a-build-artifact).
+The publication sources UI is still to come.
 
 ## Setup
 
@@ -21,8 +27,13 @@ Requires Flutter 3.47.0 / Dart 3.13.0.
 
 ```bash
 flutter pub get
-make install_objectbox   # once per machine checkout — see below
+make setup   # = make install_objectbox + make install_model — once per checkout
 ```
+
+`make install_model` fetches the embedding model (~131 MB) from a pinned
+Hugging Face revision into `assets/models/` and verifies its SHA-256. It is
+required before `flutter run`/build, because the asset is declared in
+`pubspec.yaml` and Flutter fails a build when a declared asset is missing.
 
 ### `make install_objectbox` is not optional
 

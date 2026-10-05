@@ -90,17 +90,72 @@ void validateChunkSet(PublicationDto publication) {
   // malformed local write, so a payload cannot smuggle in a vector the store
   // would silently ignore.
   for (final chunk in chunks) {
-    try {
-      decodeVector(chunk.embeddingBase64);
-    } on SyncPayloadException catch (error) {
-      throw ChunkSetRejection('chunk ${chunk.uuid}: ${error.reason}');
-    } on InvalidEmbeddingException catch (error) {
+    _validateVector(chunk.uuid, chunk.embeddingBase64);
+  }
+}
+
+/// Validates an incoming **note** chunk set against its declaration
+/// (spec FR22). The note analogue of [validateChunkSet]; refuses the whole
+/// payload on any inconsistency.
+void validateNoteChunkSet(NoteDto note) {
+  final declared = note.declaredChunkCount;
+  final chunks = note.chunks;
+
+  if (!note.chunksIncluded && (chunks.isNotEmpty || declared != 0)) {
+    throw ChunkSetRejection(
+      'note ${note.uuid} declares no chunk set but carries '
+      '${chunks.length} chunk(s) and declares $declared',
+    );
+  }
+
+  if (chunks.length != declared) {
+    throw ChunkSetRejection(
+      'note ${note.uuid} declares $declared chunk(s) but ${chunks.length} '
+      'arrived',
+    );
+  }
+
+  final indices = chunks.map((c) => c.chunkIndex).toList()..sort();
+  for (var expected = 0; expected < indices.length; expected++) {
+    if (indices[expected] != expected) {
       throw ChunkSetRejection(
-        'chunk ${chunk.uuid} has a ${error.actualLength}-dimension vector, '
-        'not ${error.expectedLength}',
+        'note ${note.uuid} chunk indices are not contiguous from 0: expected '
+        '$expected, found ${indices[expected]}',
       );
-    } on FormatException {
-      throw ChunkSetRejection('chunk ${chunk.uuid}: vector is not valid base64');
     }
+  }
+
+  for (final chunk in chunks) {
+    if (chunk.noteUuid != note.uuid) {
+      throw ChunkSetRejection(
+        'chunk ${chunk.uuid} claims parent ${chunk.noteUuid} but arrived '
+        'inside note ${note.uuid}',
+      );
+    }
+    if (chunk.uuid != noteChunkUuidFor(note.uuid, chunk.chunkIndex)) {
+      throw ChunkSetRejection(
+        'chunk at index ${chunk.chunkIndex} has uuid ${chunk.uuid}, which does '
+        'not match its derived identity',
+      );
+    }
+  }
+
+  for (final chunk in chunks) {
+    _validateVector(chunk.uuid, chunk.embeddingBase64);
+  }
+}
+
+void _validateVector(String uuid, String embeddingBase64) {
+  try {
+    decodeVector(embeddingBase64);
+  } on SyncPayloadException catch (error) {
+    throw ChunkSetRejection('chunk $uuid: ${error.reason}');
+  } on InvalidEmbeddingException catch (error) {
+    throw ChunkSetRejection(
+      'chunk $uuid has a ${error.actualLength}-dimension vector, '
+      'not ${error.expectedLength}',
+    );
+  } on FormatException {
+    throw ChunkSetRejection('chunk $uuid: vector is not valid base64');
   }
 }

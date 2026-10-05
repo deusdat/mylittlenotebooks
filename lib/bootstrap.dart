@@ -1,9 +1,26 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:mylittlenotebooks/data/ai_config_repository.dart';
+import 'package:mylittlenotebooks/data/chat_message_repository.dart';
+import 'package:mylittlenotebooks/data/embedding/embedder.dart';
+import 'package:mylittlenotebooks/data/embedding/model_assets.dart';
+import 'package:mylittlenotebooks/data/embedding/note_embedding_service.dart';
+import 'package:mylittlenotebooks/data/embedding/note_indexer.dart';
+import 'package:mylittlenotebooks/data/embedding/onnx_embedder.dart';
+import 'package:mylittlenotebooks/data/embedding/text_chunker.dart';
+import 'package:mylittlenotebooks/data/embedding/wordpiece_tokenizer.dart';
+import 'package:onnxruntime/onnxruntime.dart';
 import 'package:mylittlenotebooks/data/first_run_seeder.dart';
+import 'package:mylittlenotebooks/data/in_memory_chat_message_repository.dart';
+import 'package:mylittlenotebooks/data/in_memory_note_repository.dart';
+import 'package:mylittlenotebooks/data/note_repository.dart';
+import 'package:mylittlenotebooks/data/note_search_repository.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/objectbox/objectbox_store.dart';
 import 'package:mylittlenotebooks/data/objectbox_ai_config_repository.dart';
+import 'package:mylittlenotebooks/data/objectbox_chat_message_repository.dart';
+import 'package:mylittlenotebooks/data/objectbox_note_repository.dart';
 import 'package:mylittlenotebooks/data/objectbox_notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
 import 'package:mylittlenotebooks/data/prefs_panel_state_store.dart';
@@ -27,6 +44,14 @@ class BootstrapResult {
   final List<AiEndpointConfig> initialAiConfigs;
   final bool panelCollapsed;
 
+  /// Notes, chat messages, and background embedding (spec FR11a).
+  final NoteRepository notes;
+  final ChatMessageRepository chatMessages;
+  final NoteEmbeddingService embedding;
+
+  /// Built only when a store is opened; null on the injected-repository path.
+  final NoteSearchRepository? noteSearch;
+
   const BootstrapResult({
     required this.store,
     required this.notebooks,
@@ -34,6 +59,10 @@ class BootstrapResult {
     required this.aiConfigs,
     required this.initialAiConfigs,
     required this.panelCollapsed,
+    required this.notes,
+    required this.chatMessages,
+    required this.embedding,
+    this.noteSearch,
   });
 }
 
@@ -62,6 +91,10 @@ Future<BootstrapResult> bootstrapDependencies({
   final AiConfigRepository resolvedAiConfigs;
   final List<Notebook> initialNotebooks;
   final List<AiEndpointConfig> initialAiConfigs;
+  final NoteRepository resolvedNotes;
+  final ChatMessageRepository resolvedChatMessages;
+  final NoteEmbeddingService resolvedEmbedding;
+  final NoteSearchRepository? resolvedNoteSearch;
 
   if (notebooks != null) {
     // Test/shell path: repositories are supplied, no store is opened.
@@ -69,6 +102,11 @@ Future<BootstrapResult> bootstrapDependencies({
     initialNotebooks = notebooks.list();
     resolvedAiConfigs = aiConfigs ?? InMemoryAiConfigRepository();
     initialAiConfigs = resolvedAiConfigs.list();
+    resolvedNotes = InMemoryNoteRepository();
+    resolvedChatMessages = InMemoryChatMessageRepository();
+    resolvedEmbedding =
+        NoteEmbeddingService(repo: resolvedNotes, indexer: await _indexer());
+    resolvedNoteSearch = null;
   } else {
     // Opened exactly once, before the first frame.
     final libraryStore = await openLibraryStore();
@@ -89,6 +127,12 @@ Future<BootstrapResult> bootstrapDependencies({
     await resolvedAiConfigs.refreshTokenFlags();
     await resolvedAiConfigs.reconcile();
     initialAiConfigs = resolvedAiConfigs.list();
+
+    resolvedNotes = ObjectBoxNoteRepository(libraryStore);
+    resolvedChatMessages = ObjectBoxChatMessageRepository(libraryStore);
+    resolvedEmbedding =
+        NoteEmbeddingService(repo: resolvedNotes, indexer: await _indexer());
+    resolvedNoteSearch = ObjectBoxNoteSearchRepository(libraryStore);
   }
 
   assert(() {
@@ -103,7 +147,50 @@ Future<BootstrapResult> bootstrapDependencies({
     aiConfigs: resolvedAiConfigs,
     initialAiConfigs: initialAiConfigs,
     panelCollapsed: collapsed,
+    notes: resolvedNotes,
+    chatMessages: resolvedChatMessages,
+    embedding: resolvedEmbedding,
+    noteSearch: resolvedNoteSearch,
   );
   _cached = result;
   return result;
+}
+
+/// Builds the note indexer, preferring the real ONNX stack (spec M6).
+///
+/// Loads the bundled model and tokenizer once, opens one OrtSession, and wraps
+/// it in [OnnxEmbedder]. When the model or tokenizer asset is not bundled — as
+/// before the quantised artefact is added — it logs and falls back to the
+/// deterministic embedder so the app still runs.
+Future<NoteIndexer> _indexer() async {
+  try {
+    final tokenizerFile = await ModelAssets.tokenizerFile();
+    final modelFile = await ModelAssets.modelFile();
+    final json =
+        jsonDecode(await tokenizerFile.readAsString()) as Map<String, dynamic>;
+    final tokenizer = WordPieceTokenizer.fromJson(json);
+
+    OrtEnv.instance.init();
+    final options = OrtSessionOptions();
+    final session = OrtSession.fromFile(modelFile, options);
+    options.release();
+
+    final embedder = OnnxEmbedder(
+      session: session,
+      tokenizer: tokenizer,
+      modelId: ModelAssets.modelModelId,
+    );
+    debugPrint('[bootstrap] ONNX embedder ready (${ModelAssets.modelModelId}).');
+    return NoteIndexer(
+      chunker: HeadingAwareTextChunker(tokenizer: tokenizer),
+      embedder: embedder,
+    );
+  } catch (error) {
+    debugPrint('[bootstrap] ONNX embedder unavailable ($error); using the '
+        'deterministic fallback.');
+    return NoteIndexer(
+      chunker: HeadingAwareTextChunker(tokenizer: WhitespaceTokenizer()),
+      embedder: DeterministicEmbedder(),
+    );
+  }
 }

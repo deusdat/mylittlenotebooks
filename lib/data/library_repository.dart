@@ -35,6 +35,32 @@ class CascadedPublication {
   });
 }
 
+/// A note that a notebook delete cascaded away (spec FR15). Mirrors
+/// [CascadedPublication].
+class CascadedNote {
+  final String uuid;
+
+  /// The note's `versionCounter` as it stood before the cascade.
+  final int versionCounter;
+
+  const CascadedNote({required this.uuid, required this.versionCounter});
+}
+
+/// Everything a notebook delete removed: exclusive publications and exclusive
+/// notes (spec FR15).
+///
+/// A single return value so `SyncDeleter` has one call site and one place to
+/// write tombstones for both child kinds.
+class NotebookCascade {
+  final List<CascadedPublication> publications;
+  final List<CascadedNote> notes;
+
+  const NotebookCascade({
+    this.publications = const [],
+    this.notes = const [],
+  });
+}
+
 /// Write side of the library: creating publications, associating them with
 /// notebooks, and replacing chunk sets.
 ///
@@ -76,9 +102,8 @@ abstract interface class LibraryRepository {
   /// stay reachable from the other notebook (spec FR1, FR3).
   ///
   /// Exclusivity is resolved here, at delete time, from the notebook's own
-  /// edges — never cached (spec FR2). Returns the cascaded publications so the
-  /// caller can write tombstones. This **amends** the data-layer spec's FR12,
-  /// which previously deleted only the association; see the delete-notebook
-  /// spec's amendment record.
-  List<CascadedPublication> deleteNotebook(String notebookUuid);
+  /// edges — never cached (spec FR2). Returns the cascaded publications **and
+  /// notes** so the caller can write tombstones. This **amends** the data-layer
+  /// spec's FR12 and this feature's FR15; see the amendment record.
+  NotebookCascade deleteNotebook(String notebookUuid);
 }

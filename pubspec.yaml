@@ -56,6 +56,8 @@ dependencies:
   # on Android, Credential Manager/DPAPI on Windows, and libsecret on Linux.
   # The token is *never* an ObjectBox column; see docs/settings-conventions.md.
   flutter_secure_storage: ^11.2.0
+  onnxruntime: ^1.4.1
+  flutter_rust_bridge: ^2.13.0
 
 dev_dependencies:
   flutter_test:
@@ -95,6 +97,13 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # The on-device embedding stack (add-notes, M6). Bundled so the app needs no
+  # network at run time; `ModelAssets.copyOnce` copies each to the app-support
+  # directory once and hands the runtime a path. See docs/data-conventions.md.
+  assets:
+    - assets/models/nomic_embed_text_v1.5_quantized.onnx
+    - assets/tokenizers/tokenizer.json
 
   # To add assets to your application, add an assets section, like this:
   # assets:

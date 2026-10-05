@@ -65,3 +65,17 @@ download/
 # entity classes. It is safe to ignore; run `make codegen` after checkout and
 # after any entity change to produce it.
 lib/objectbox.g.dart
+
+# Rust build output for the tokenizer crate. `Cargo.lock` is NOT ignored: it
+# pins `unicode-segmentation` to a version compatible with the toolchain's MSRV
+# (see docs/data-conventions.md), so the crate builds reproducibly.
+native/**/target/
+
+# flutter_rust_bridge generated bindings, produced by
+# `flutter_rust_bridge_codegen generate`. Derived code, like objectbox.g.dart.
+lib/bridge/
+
+# The embedding model is a BUILD ARTIFACT, not source: ~131 MB and reproducible
+# from a pinned Hugging Face revision plus SHA-256 via `make install_model`.
+# Never committed. `tokenizer.json` is small and IS committed.
+assets/models/*.onnx

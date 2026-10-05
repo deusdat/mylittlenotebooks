@@ -1,11 +1,18 @@
 import 'package:mylittlenotebooks/data/identity.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_chat_message.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_chunk.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/models/ai_endpoint_config.dart';
+import 'package:mylittlenotebooks/models/chat_message.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
+import 'package:mylittlenotebooks/models/note.dart';
+import 'package:mylittlenotebooks/models/note_chunk.dart';
 import 'package:mylittlenotebooks/models/notebook.dart';
 import 'package:mylittlenotebooks/models/publication.dart';
 
@@ -135,5 +142,112 @@ extension ObAiConfigMapping on ObAiConfig {
         endpoint: endpoint,
         shared: shared,
         hasToken: hasToken,
+      );
+}
+
+// --- Note -------------------------------------------------------------------
+
+extension ObNoteMapping on ObNote {
+  /// The full aggregate, including the body. Loads the document row, so use it
+  /// only where the body is genuinely needed — the editor (spec FR17).
+  Note toDomain({String body = ''}) => Note(
+        uuid: uuid,
+        title: title,
+        body: body,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        embeddingModelId: embeddingModelId,
+        chunkCount: chunkCount,
+        embeddingState: NoteEmbeddingState.fromStorage(embeddingState),
+      );
+
+  /// The metadata only. **This is what list paths use**, so they never read the
+  /// document row (spec NFR4, FR17).
+  NoteSummary toSummary() => NoteSummary(
+        uuid: uuid,
+        title: title,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        embeddingModelId: embeddingModelId,
+        chunkCount: chunkCount,
+        embeddingState: NoteEmbeddingState.fromStorage(embeddingState),
+      );
+}
+
+extension NoteMapping on Note {
+  ObNote toEntity() => ObNote(
+        uuid: uuid,
+        title: title,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        embeddingModelId: embeddingModelId,
+        chunkCount: chunkCount,
+        embeddingState: embeddingState.storage,
+      );
+}
+
+/// The body behind a note, or null when it has none. A separate read so the body
+/// is fetched on demand and never as a side effect of listing notes (spec NFR4).
+String? noteBodyOf(ObNoteDocument? document) => document?.markdown;
+
+extension ObNoteChunkMapping on ObNoteChunk {
+  /// Requires [noteUuid] because the entity holds only the int id (spec FR5).
+  NoteChunk toDomain({required String noteUuid}) => NoteChunk(
+        noteUuid: noteUuid,
+        chunkIndex: chunkIndex,
+        content: content,
+        tokenCount: tokenCount,
+        embedding: embedding,
+      );
+}
+
+extension NoteChunkDraftMapping on ChunkDraft {
+  /// Writes **both** representations of the note reference in one go — the
+  /// indexed [ObNoteChunk.noteId] column and the [ObNoteChunk.note] relation —
+  /// so they cannot drift (spec FR12, FR21).
+  ObNoteChunk toNoteChunkEntity({
+    required int noteId,
+    required String noteUuid,
+  }) {
+    final entity = ObNoteChunk(
+      uuid: noteChunkUuidFor(noteUuid, chunkIndex),
+      chunkIndex: chunkIndex,
+      content: content,
+      tokenCount: tokenCount,
+      noteId: noteId,
+      embedding: embedding,
+    );
+    entity.note.targetId = noteId;
+    return entity;
+  }
+}
+
+// --- Chat message -----------------------------------------------------------
+
+/// Storage form of a role. Stored as a stable string, never an ordinal.
+String chatRoleToStorage(ChatMessageRole role) => role.name;
+
+/// Parses a stored role, defaulting unknown values to `user` rather than
+/// throwing: a message's role must never make a list read fail.
+ChatMessageRole chatRoleFromStorage(String role) =>
+    role == 'assistant' ? ChatMessageRole.assistant : ChatMessageRole.user;
+
+extension ObChatMessageMapping on ObChatMessage {
+  ChatMessage toDomain({required String noteUuid}) => ChatMessage(
+        uuid: uuid,
+        noteUuid: noteUuid,
+        role: chatRoleFromStorage(role),
+        text: text,
+        createdAt: createdAt,
+      );
+}
+
+extension ChatMessageMapping on ChatMessage {
+  ObChatMessage toEntity({required int noteId}) => ObChatMessage(
+        uuid: uuid,
+        noteId: noteId,
+        role: chatRoleToStorage(role),
+        text: text,
+        createdAt: createdAt,
       );
 }

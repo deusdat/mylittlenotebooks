@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:mylittlenotebooks/data/ai_config_repository.dart';
+import 'package:mylittlenotebooks/data/note_environment.dart';
 import 'package:mylittlenotebooks/data/notebook_repository.dart';
 import 'package:mylittlenotebooks/data/panel_state_store.dart';
 import 'package:mylittlenotebooks/models/ai_endpoint_config.dart';
@@ -27,6 +28,7 @@ class App extends HookWidget {
   final List<Notebook> initialNotebooks;
   final AiConfigRepository aiConfigs;
   final List<AiEndpointConfig> initialAiConfigs;
+  final NoteEnvironment noteEnv;
 
   const App({
     super.key,
@@ -36,6 +38,7 @@ class App extends HookWidget {
     required this.initialNotebooks,
     required this.aiConfigs,
     required this.initialAiConfigs,
+    required this.noteEnv,
   });
 
   @override
@@ -44,8 +47,8 @@ class App extends HookWidget {
     // state — unlike the panel's pure geometry, this genuinely must not be
     // rebuilt. `App` rebuilds would otherwise reset the navigation stack.
     final router = useMemoized(
-      () => appRouter(repo),
-      [repo],
+      () => appRouter(repo, noteEnv),
+      [repo, noteEnv],
       (router) => router.dispose(),
     );
 

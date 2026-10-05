@@ -1,5 +1,6 @@
 import 'package:objectbox/objectbox.dart';
 
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 
 /// Storage entity for a notebook (spec FR2).
@@ -41,6 +42,11 @@ class ObNotebook {
   /// constraint, and enforcing it here would force a re-ingest of the user's
   /// whole library the day multi-select ships (spec D2).
   final publications = ToMany<ObPublication>();
+
+  /// The many-to-many edge to notes (spec FR3), reversing
+  /// [ObNote.notebooks]. Deliberately many-to-many for the same reason the
+  /// publication edge is.
+  final notes = ToMany<ObNote>();
 
   ObNotebook({
     required this.uuid,

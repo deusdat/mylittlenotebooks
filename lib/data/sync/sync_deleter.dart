@@ -23,9 +23,11 @@
 library;
 
 import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
 import 'package:mylittlenotebooks/data/objectbox_library_repository.dart';
+import 'package:mylittlenotebooks/data/objectbox_note_repository.dart';
 import 'package:mylittlenotebooks/data/sync/device_id.dart';
 import 'package:mylittlenotebooks/data/sync/sync_tombstones.dart';
 import 'package:mylittlenotebooks/data/sync/sync_version.dart';
@@ -94,16 +96,16 @@ class SyncDeleter {
 
     _store.runInTransaction(TxMode.write, () {
       // The data layer removes the notebook and its exclusive publications and
-      // returns each cascaded publication's uuid and pre-delete counter. Its
-      // own `runInTransaction` joins this one, so the rows and the tombstones
+      // notes, returning each cascaded uuid and pre-delete counter. Its own
+      // `runInTransaction` joins this one, so the rows and the tombstones
       // commit together.
-      final cascaded = _library.deleteNotebook(notebookUuid);
+      final cascade = _library.deleteNotebook(notebookUuid);
 
       // The notebook's own tombstone, at the version it died at.
       _tombstones.markDead(notebookUuid, versionCounter: version.counter);
 
       // One tombstone per cascaded publication, each at its own next version.
-      for (final publication in cascaded) {
+      for (final publication in cascade.publications) {
         _tombstones.markDead(
           publication.uuid,
           versionCounter:
@@ -112,7 +114,36 @@ class SyncDeleter {
         );
       }
 
+      // The same for every cascaded note (spec FR15, FR23).
+      for (final note in cascade.notes) {
+        _tombstones.markDead(
+          note.uuid,
+          versionCounter:
+              nextVersion(_versionOf(note.versionCounter), _deviceId).counter,
+        );
+      }
+
       faultHook?.call();
+      return null;
+    });
+  }
+
+  /// Deletes a note locally, cascading and tombstoning in one transaction
+  /// (spec FR23).
+  ///
+  /// Mirrors [deletePublicationLocally]; no UI triggers it today, but the sync
+  /// module needs a single local delete path so a note delete can be selected
+  /// into a later delta.
+  void deleteNoteLocally(String noteUuid) {
+    final note = _findNote(noteUuid);
+    final version = nextVersion(
+      note == null ? noVersion : _versionOf(note.versionCounter),
+      _deviceId,
+    );
+
+    _store.runInTransaction(TxMode.write, () {
+      if (note != null) cascadeNoteRows(_store, note);
+      _tombstones.markDead(noteUuid, versionCounter: version.counter);
       return null;
     });
   }
@@ -167,6 +198,16 @@ class SyncDeleter {
         .box<ObPublication>()
         .query(ObPublication_.uuid.equals(uuid))
         .build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
+  ObNote? _findNote(String uuid) {
+    final query =
+        _store.box<ObNote>().query(ObNote_.uuid.equals(uuid)).build();
     try {
       return query.findFirst();
     } finally {

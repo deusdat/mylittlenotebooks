@@ -1,0 +1,9 @@
+# flutter_rust_bridge_codegen configuration (spec D17, plan §J).
+#
+# Generate the Dart bindings with:
+#   flutter_rust_bridge_codegen generate
+#
+# The generated files land under lib/bridge/ and are never hand-edited.
+rust_input: crate::api
+rust_root: native/rust_tokenizer
+dart_output: lib/bridge

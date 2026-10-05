@@ -6,9 +6,13 @@ import 'package:mylittlenotebooks/data/identity.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/objectbox_store.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_chat_message.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_device_meta.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_chunk.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_peer_watermark.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
@@ -465,6 +469,30 @@ Map<String, List<String?>> storedStringValues(Store store) {
   entries.add(MapEntry('ObChunk.uuid', [for (final c in _chunks(store)) c.uuid]));
   entries.add(MapEntry('ObChunk.content', [for (final c in _chunks(store)) c.content]));
 
+  entries.add(MapEntry('ObNote.uuid', [for (final n in _notes(store)) n.uuid]));
+  entries.add(MapEntry('ObNote.title', [for (final n in _notes(store)) n.title]));
+  entries.add(MapEntry('ObNote.embeddingModelId',
+      [for (final n in _notes(store)) n.embeddingModelId]));
+  entries.add(MapEntry('ObNote.embeddingState',
+      [for (final n in _notes(store)) n.embeddingState]));
+
+  entries.add(MapEntry('ObNoteDocument.uuid',
+      [for (final d in _noteDocuments(store)) d.uuid]));
+  entries.add(MapEntry('ObNoteDocument.markdown',
+      [for (final d in _noteDocuments(store)) d.markdown]));
+
+  entries.add(MapEntry('ObNoteChunk.uuid',
+      [for (final c in _noteChunks(store)) c.uuid]));
+  entries.add(MapEntry('ObNoteChunk.content',
+      [for (final c in _noteChunks(store)) c.content]));
+
+  entries.add(MapEntry('ObChatMessage.uuid',
+      [for (final m in _chatMessages(store)) m.uuid]));
+  entries.add(MapEntry('ObChatMessage.role',
+      [for (final m in _chatMessages(store)) m.role]));
+  entries.add(MapEntry('ObChatMessage.text',
+      [for (final m in _chatMessages(store)) m.text]));
+
   entries.add(MapEntry('ObTombstone.uuid',
       [for (final t in store.box<ObTombstone>().getAll()) t.uuid]));
 
@@ -492,6 +520,12 @@ List<ObPublication> _publications(Store store) =>
     store.box<ObPublication>().getAll();
 List<ObDocument> _documents(Store store) => store.box<ObDocument>().getAll();
 List<ObChunk> _chunks(Store store) => store.box<ObChunk>().getAll();
+List<ObNote> _notes(Store store) => store.box<ObNote>().getAll();
+List<ObNoteDocument> _noteDocuments(Store store) =>
+    store.box<ObNoteDocument>().getAll();
+List<ObNoteChunk> _noteChunks(Store store) => store.box<ObNoteChunk>().getAll();
+List<ObChatMessage> _chatMessages(Store store) =>
+    store.box<ObChatMessage>().getAll();
 
 String _abbreviate(String? value) {
   if (value == null) return 'null';

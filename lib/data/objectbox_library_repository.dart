@@ -5,6 +5,7 @@ import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
+import 'package:mylittlenotebooks/data/objectbox_note_repository.dart';
 import 'package:mylittlenotebooks/domain_mapping.dart';
 import 'package:mylittlenotebooks/models/chunk.dart';
 import 'package:mylittlenotebooks/models/publication.dart';
@@ -219,9 +220,10 @@ class ObjectBoxLibraryRepository implements LibraryRepository {
   }
 
   @override
-  List<CascadedPublication> deleteNotebook(String notebookUuid) {
+  NotebookCascade deleteNotebook(String notebookUuid) {
     final notebook = _requireNotebook(notebookUuid);
-    final cascaded = <CascadedPublication>[];
+    final publications = <CascadedPublication>[];
+    final notes = <CascadedNote>[];
     _store.runInTransaction(TxMode.write, () {
       // Copy the edges first: cascading a publication mutates the `ToMany` we
       // would otherwise be iterating.
@@ -232,18 +234,31 @@ class ObjectBoxLibraryRepository implements LibraryRepository {
         // unrecoverable data loss the user did not ask for (spec FR1, FR3).
         if (publication.notebooks.length > 1) continue;
         // Captured before the row goes, for the caller's tombstone (spec FR5).
-        cascaded.add(CascadedPublication(
+        publications.add(CascadedPublication(
           uuid: publication.uuid,
           versionCounter: publication.versionCounter,
         ));
         _cascadePublication(publication);
       }
 
+      // Notes cascade by the same exclusivity rule (spec FR15): a note attached
+      // to any other notebook is shared and survives, holding one fewer
+      // notebook. `cascadeNoteRows` is the same cascade `deleteNote` uses.
+      final attachedNotes = notebook.notes.toList();
+      for (final note in attachedNotes) {
+        if (note.notebooks.length > 1) continue;
+        notes.add(CascadedNote(
+          uuid: note.uuid,
+          versionCounter: note.versionCounter,
+        ));
+        cascadeNoteRows(_store, note);
+      }
+
       // Removing the notebook removes its `ToMany` edges; shared publications
-      // are left holding one fewer notebook, exactly as before.
+      // and notes are left holding one fewer notebook.
       _notebooks.remove(notebook.id);
     });
-    return cascaded;
+    return NotebookCascade(publications: publications, notes: notes);
   }
 
   ObPublication _requirePublication(String uuid) {

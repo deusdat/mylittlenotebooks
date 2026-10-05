@@ -379,7 +379,7 @@ void main() {
         isEmpty,
         reason: 'chunks must not outlive their cascaded publication',
       );
-      expect(cascaded.map((c) => c.uuid), [publication.uuid]);
+      expect(cascaded.publications.map((c) => c.uuid), [publication.uuid]);
     });
 
     test('a shared publication survives and stays searchable', () {
@@ -399,7 +399,7 @@ void main() {
 
       expect(notebooks.exists(drop.id), isFalse);
       expect(notebooks.exists(keep.id), isTrue);
-      expect(cascaded, isEmpty, reason: 'nothing exclusive to cascade');
+      expect(cascaded.publications, isEmpty, reason: 'nothing exclusive to cascade');
 
       // The publication itself is untouched...
       expect(publications.byUuid(publication.uuid), isNotNull);
@@ -422,7 +422,7 @@ void main() {
 
     test('a notebook with no publications deletes cleanly', () {
       final empty = notebooks.create();
-      expect(library.deleteNotebook(empty.id), isEmpty);
+      expect(library.deleteNotebook(empty.id).publications, isEmpty);
       expect(notebooks.exists(empty.id), isFalse);
     });
 
@@ -441,7 +441,7 @@ void main() {
           .versionCounter;
 
       final cascaded = library.deleteNotebook(only.id);
-      expect(cascaded.single.versionCounter, before);
+      expect(cascaded.publications.single.versionCounter, before);
     });
   });
 

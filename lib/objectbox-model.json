@@ -102,6 +102,11 @@
           "id": "1:1995037125426230318",
           "name": "publications",
           "targetId": "3:741772455080352949"
+        },
+        {
+          "id": "3:3450538722491396991",
+          "name": "notes",
+          "targetId": "10:2309477354385204659"
         }
       ]
     },
@@ -373,11 +378,239 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "9:8462401725487441227",
+      "lastPropertyId": "7:2243823903046341215",
+      "name": "ObChatMessage",
+      "properties": [
+        {
+          "id": "1:1478441261811563736",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3487179948440800674",
+          "name": "uuid",
+          "indexId": "21:3526438780950473503",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:2852115557678362877",
+          "name": "noteId",
+          "indexId": "22:2760626198980738151",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "4:8195249168995105205",
+          "name": "role",
+          "type": 9
+        },
+        {
+          "id": "5:7464095444288946845",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "6:1728342462603076247",
+          "name": "createdAt",
+          "type": 10
+        },
+        {
+          "id": "7:2243823903046341215",
+          "name": "messageOwnerId",
+          "indexId": "23:571020065139682500",
+          "type": 11,
+          "flags": 520,
+          "relationTarget": "ObNote"
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "10:2309477354385204659",
+      "lastPropertyId": "11:4423373697753366480",
+      "name": "ObNote",
+      "properties": [
+        {
+          "id": "1:9127976145586571937",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:3956271391895000688",
+          "name": "uuid",
+          "indexId": "24:3105942137484804133",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:8388473864151445825",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "4:9090947821609292655",
+          "name": "createdAt",
+          "type": 10
+        },
+        {
+          "id": "5:8454570893697580058",
+          "name": "updatedAt",
+          "type": 10
+        },
+        {
+          "id": "6:1454022045812084592",
+          "name": "embeddingModelId",
+          "type": 9
+        },
+        {
+          "id": "7:7197657247893697888",
+          "name": "chunkCount",
+          "type": 6
+        },
+        {
+          "id": "8:4283743504338331313",
+          "name": "versionCounter",
+          "indexId": "25:4640163665977309168",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "9:4625032359067220779",
+          "name": "chunkSetVersion",
+          "type": 6
+        },
+        {
+          "id": "10:1685176338860083593",
+          "name": "documentId",
+          "indexId": "26:5541814874079046277",
+          "type": 11,
+          "flags": 520,
+          "relationTarget": "ObNoteDocument"
+        },
+        {
+          "id": "11:4423373697753366480",
+          "name": "embeddingState",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "11:1253155756065205243",
+      "lastPropertyId": "8:1875633185129243989",
+      "name": "ObNoteChunk",
+      "properties": [
+        {
+          "id": "1:7510930683095279479",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:8376498562511931638",
+          "name": "uuid",
+          "indexId": "27:6202142093181348226",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:625548919672751152",
+          "name": "chunkIndex",
+          "type": 6
+        },
+        {
+          "id": "4:1519421566485656481",
+          "name": "content",
+          "type": 9
+        },
+        {
+          "id": "5:5789555747726090842",
+          "name": "tokenCount",
+          "type": 6
+        },
+        {
+          "id": "6:8222504656106867646",
+          "name": "noteId",
+          "indexId": "28:2743316122847530126",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "7:7860315064560821662",
+          "name": "embedding",
+          "indexId": "29:1460980283342547720",
+          "type": 28,
+          "flags": 8
+        },
+        {
+          "id": "8:1875633185129243989",
+          "name": "noteRef",
+          "indexId": "30:2269219114184547239",
+          "type": 11,
+          "flags": 520,
+          "relationTarget": "ObNote"
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "12:7271313858658296673",
+      "lastPropertyId": "6:454026971912614096",
+      "name": "ObNoteDocument",
+      "properties": [
+        {
+          "id": "1:1131861833506055079",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2282540645690801157",
+          "name": "uuid",
+          "indexId": "31:5506967014157099275",
+          "type": 9,
+          "flags": 2080
+        },
+        {
+          "id": "3:3564882921227065177",
+          "name": "noteId",
+          "indexId": "32:4670233207657966418",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "4:6531440638313314204",
+          "name": "versionCounter",
+          "indexId": "33:4523278624145415951",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "5:6507458017878202412",
+          "name": "markdown",
+          "type": 9
+        },
+        {
+          "id": "6:454026971912614096",
+          "name": "noteOwnerId",
+          "indexId": "34:6437765470120084790",
+          "type": 11,
+          "flags": 520,
+          "relationTarget": "ObNote"
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "8:731936721671266193",
-  "lastIndexId": "20:7853371796726062260",
-  "lastRelationId": "2:2721689940511666391",
+  "lastEntityId": "12:7271313858658296673",
+  "lastIndexId": "34:6437765470120084790",
+  "lastRelationId": "3:3450538722491396991",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
   "modelVersionParserMinimum": 5,

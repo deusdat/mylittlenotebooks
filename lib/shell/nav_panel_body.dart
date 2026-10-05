@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:mylittlenotebooks/data/note_environment.dart';
 import 'package:mylittlenotebooks/models/nav_level.dart';
 import 'package:mylittlenotebooks/shell/nav_destination_tile.dart';
 import 'package:mylittlenotebooks/shell/nav_panel_detail_level.dart';
@@ -13,18 +14,23 @@ import 'package:mylittlenotebooks/shell/nav_panel_list_level.dart';
 class NavPanelBody extends StatelessWidget {
   final bool collapsed;
   final NavLevel navLevel;
+  final NoteEnvironment noteEnv;
 
   const NavPanelBody({
     super.key,
     required this.collapsed,
     required this.navLevel,
+    required this.noteEnv,
   });
 
   @override
   Widget build(BuildContext context) => switch (navLevel) {
     NavLevelList() => NavPanelListLevel(collapsed: collapsed),
-    NavLevelDetail(:final notebookId) =>
-      NavPanelDetailLevel(collapsed: collapsed, notebookId: notebookId),
+    NavLevelDetail(:final notebookId) => NavPanelDetailLevel(
+        collapsed: collapsed,
+        notebookId: notebookId,
+        noteEnv: noteEnv,
+      ),
   };
 }
 

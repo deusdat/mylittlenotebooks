@@ -4,10 +4,13 @@ PODS:
   - objectbox_flutter_libs (0.0.1):
     - FlutterMacOS
     - ObjectBox (= 5.3.0)
+  - onnxruntime (0.0.1):
+    - FlutterMacOS
 
 DEPENDENCIES:
   - FlutterMacOS (from `Flutter/ephemeral`)
   - objectbox_flutter_libs (from `Flutter/ephemeral/.symlinks/plugins/objectbox_flutter_libs/macos`)
+  - onnxruntime (from `Flutter/ephemeral/.symlinks/plugins/onnxruntime/macos`)
 
 SPEC REPOS:
   trunk:
@@ -18,11 +21,14 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral
   objectbox_flutter_libs:
     :path: Flutter/ephemeral/.symlinks/plugins/objectbox_flutter_libs/macos
+  onnxruntime:
+    :path: Flutter/ephemeral/.symlinks/plugins/onnxruntime/macos
 
 SPEC CHECKSUMS:
   FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
   ObjectBox: 2aae8ad350012cb53c6e7848064307cf68617f73
   objectbox_flutter_libs: 01bfdc581d64bd93bb6ce777b8c376e091f74c1f
+  onnxruntime: 922a85d3c9ed1b3c2b515ec903fc4d9b8f51d96b
 
 PODFILE CHECKSUM: 1e95c36afbfd1cb6423ceca4de7a8e1b256fb6ac
 

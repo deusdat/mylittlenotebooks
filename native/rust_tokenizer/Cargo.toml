@@ -1,0 +1,15 @@
+[package]
+name = "rust_tokenizer"
+version = "0.1.0"
+edition = "2021"
+
+# cdylib for Flutter's dynamic linking; staticlib for iOS/macOS frameworks.
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Hugging Face tokenizers: the same library `tokenizer.json` comes from, so the
+# ids and offsets match the model exactly (spec D17).
+tokenizers = "0.19"
+# flutter_rust_bridge generates the Dart bindings from `src/api.rs`.
+flutter_rust_bridge = "2"

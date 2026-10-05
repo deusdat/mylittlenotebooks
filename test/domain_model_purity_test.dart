@@ -26,6 +26,10 @@ const dataModels = <String>{
   'chunk.dart',
   'search_result.dart',
   'ai_endpoint_config.dart',
+  'note.dart',
+  'note_chunk.dart',
+  'note_search_result.dart',
+  'chat_message.dart',
 };
 
 /// The rest of `lib/models/` holds presentation descriptors rather than domain

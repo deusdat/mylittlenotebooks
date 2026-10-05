@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'package:mylittlenotebooks/data/objectbox/ob_ai_config.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_chunk.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_document.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_chunk.dart';
+import 'package:mylittlenotebooks/data/objectbox/ob_note_document.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_notebook.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_peer_watermark.dart';
 import 'package:mylittlenotebooks/data/objectbox/ob_publication.dart';
@@ -130,6 +133,19 @@ class PushSender {
           metadata: config.version.counter,
           chunkSet: 0,
           document: 0,
+        ),
+        existing,
+      );
+    }
+    for (final note in payload.notes) {
+      final existing = _watermarkRow(peerDeviceId, note.uuid);
+      _write(
+        peerDeviceId,
+        note.uuid,
+        SentCounters(
+          metadata: note.version.counter,
+          chunkSet: note.chunkSetVersion.counter,
+          document: note.document?.version.counter ?? 0,
         ),
         existing,
       );
@@ -274,11 +290,39 @@ class PushSender {
       configQuery.close();
     }
 
+    // Notes (spec FR24). Three independent axes exactly as a publication, so a
+    // retitle transfers metadata and no chunks.
+    final notes = <NoteDto>[];
+    final noteQuery = _notes.query().build();
+    try {
+      for (final note in noteQuery.find()) {
+        final sent = sentTo(peerDeviceId, note.uuid);
+        final document = _noteDocumentFor(note.id);
+
+        final metadataMoved = _moved(sent?.metadata, note.versionCounter);
+        final setMoved = _moved(sent?.chunkSet, note.chunkSetVersion);
+        final documentMoved =
+            _moved(sent?.document, document?.versionCounter ?? 0);
+        if (!metadataMoved && !setMoved && !documentMoved) continue;
+
+        notes.add(_toNoteDto(
+          note,
+          document: document,
+          includeMetadata: metadataMoved,
+          includeChunkSet: setMoved,
+          includeDocument: documentMoved,
+        ));
+      }
+    } finally {
+      noteQuery.close();
+    }
+
     return SyncPayload(
       notebooks: notebooks,
       publications: publications,
       deletes: deletes,
       aiConfigs: aiConfigs,
+      notes: notes,
     );
   }
 
@@ -412,6 +456,86 @@ class PushSender {
     }
   }
 
+  /// Builds a note record for the selected axes (spec FR24).
+  NoteDto _toNoteDto(
+    ObNote note, {
+    required ObNoteDocument? document,
+    required bool includeMetadata,
+    required bool includeChunkSet,
+    required bool includeDocument,
+  }) {
+    final chunks =
+        includeChunkSet ? _noteChunksFor(note) : const <NoteChunkDto>[];
+
+    return NoteDto(
+      uuid: note.uuid,
+      title: note.title,
+      createdAt: note.createdAt,
+      updatedAt: note.updatedAt,
+      embeddingModelId: note.embeddingModelId,
+      // Always "how many chunks are in *this* payload", never local state.
+      declaredChunkCount: chunks.length,
+      chunksIncluded: includeChunkSet,
+      version: VersionDto(
+        counter: note.versionCounter,
+        deviceId: _deviceId,
+      ),
+      chunkSetVersion: VersionDto(
+        counter: note.chunkSetVersion,
+        deviceId: _deviceId,
+      ),
+      notebookUuids: note.notebooks.map((n) => n.uuid).toList()..sort(),
+      document: includeDocument && document != null
+          ? NoteDocumentDto(
+              uuid: document.uuid,
+              noteUuid: note.uuid,
+              markdown: document.markdown,
+              version: VersionDto(
+                counter: document.versionCounter,
+                deviceId: _deviceId,
+              ),
+            )
+          : null,
+      chunks: chunks,
+    );
+  }
+
+  List<NoteChunkDto> _noteChunksFor(ObNote note) {
+    final query =
+        _noteChunks.query(ObNoteChunk_.noteId.equals(note.id)).build();
+    try {
+      final rows = query.find()
+        ..sort((a, b) => a.chunkIndex.compareTo(b.chunkIndex));
+      return [
+        for (final row in rows)
+          NoteChunkDto(
+            uuid: row.uuid,
+            chunkIndex: row.chunkIndex,
+            content: row.content,
+            tokenCount: row.tokenCount,
+            noteUuid: note.uuid,
+            embeddingBase64: encodeVector(row.embedding),
+            // The set's version, not a per-chunk one (the set is replaced
+            // wholesale under this single version).
+            version: VersionDto(
+                counter: note.chunkSetVersion, deviceId: _deviceId),
+          ),
+      ];
+    } finally {
+      query.close();
+    }
+  }
+
+  ObNoteDocument? _noteDocumentFor(int noteId) {
+    final query =
+        _noteDocuments.query(ObNoteDocument_.noteId.equals(noteId)).build();
+    try {
+      return query.findFirst();
+    } finally {
+      query.close();
+    }
+  }
+
   void _write(
     String peerDeviceId,
     String recordUuid,
@@ -465,6 +589,9 @@ class PushSender {
   Box<ObNotebook> get _notebooks => _store.box<ObNotebook>();
   Box<ObAiConfig> get _aiConfigs => _store.box<ObAiConfig>();
   Box<ObPeerWatermark> get _watermarks => _store.box<ObPeerWatermark>();
+  Box<ObNote> get _notes => _store.box<ObNote>();
+  Box<ObNoteChunk> get _noteChunks => _store.box<ObNoteChunk>();
+  Box<ObNoteDocument> get _noteDocuments => _store.box<ObNoteDocument>();
 }
 
 /// The three independent versions of one record, as last sent to a peer.
